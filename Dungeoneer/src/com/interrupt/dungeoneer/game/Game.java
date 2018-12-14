@@ -166,12 +166,11 @@ public class Game {
 		EntityManager.setSingleton(entityManager);
 	}
 	
-	public Game(Level levelToStart) {
+	public Game(Level levelToStart, Boolean editor) {
 		instance = this;
 		level = levelToStart;
 		
-		// we're in the editor
-		inEditor = true;
+		inEditor = editor;
 		
 		Game.flashTimer = 0;
 		message.clear();
@@ -201,7 +200,9 @@ public class Game {
 
 		loadManagers();
 		
-		Gdx.app.log("DelverLifeCycle", "READY EDITOR ONE");
+		if (inEditor) {
+			Gdx.app.log("DelverLifeCycle", "READY EDITOR ONE");
+		}
 
 		// try loading the player template
 		try {
@@ -217,7 +218,12 @@ public class Game {
 		player.saveVersion = SAVE_VERSION;
 
 		levelNum = 0;
-		level.loadFromEditor();
+		
+		if (inEditor) {
+			level.loadFromEditor();
+		} else {
+			level.load();
+		}
 
 		player.randomSeed = rand.nextInt();
 		player.gold = 1000;
@@ -227,6 +233,21 @@ public class Game {
 		
 		try {
 			player.init();
+
+			if(!inEditor) {
+				if(level.playerStartX != null && level.playerStartY != null) {
+					player.x = level.playerStartX + 0.5f;
+					player.y = level.playerStartY + 0.5f;
+				}
+				else {
+					player.x = 0;
+					player.y = 0;
+				}
+
+				player.z = level.getTile((int)player.x, (int)player.y).getFloorHeight() + 0.5f;
+				if(level.playerStartRot != null) player.rot = (float)Math.toRadians(-(level.playerStartRot + 180f));
+			}
+
 			level.setPlayer(player);
 		}
 		catch(Exception ex) { Gdx.app.log("DelverLifeCycle", ex.getMessage()); }
