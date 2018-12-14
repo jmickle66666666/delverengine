@@ -223,6 +223,15 @@ public class Game {
 			level.loadFromEditor();
 		} else {
 			level.load();
+
+			if(level.playerStartX != null && level.playerStartY != null) {
+				player.x = level.playerStartX + 0.5f;
+				player.y = level.playerStartY + 0.5f;
+			}
+			else {
+				player.x = 0;
+				player.y = 0;
+			}
 		}
 
 		player.randomSeed = rand.nextInt();

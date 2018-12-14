@@ -51,6 +51,7 @@ public class GameManager {
 
 	public void startGame(Level level) {
 		game = new Game(level, false);
+		renderer.init();
 		game.setInputHandler(myGameApp.input);
 		
 		gameHasStarted = true;

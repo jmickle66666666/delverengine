@@ -12,12 +12,14 @@ import com.badlogic.gdx.utils.Align;
 import com.badlogic.gdx.utils.Array;
 import com.interrupt.dungeoneer.Audio;
 import com.interrupt.dungeoneer.GameApplication;
+import com.interrupt.dungeoneer.GameInput;
 import com.interrupt.dungeoneer.GameManager;
 import com.interrupt.dungeoneer.game.Colors;
 import com.interrupt.dungeoneer.game.Game;
 import com.interrupt.dungeoneer.game.Level;
 import com.interrupt.dungeoneer.game.ModManager;
 import com.interrupt.dungeoneer.input.Actions;
+import com.interrupt.dungeoneer.screens.GameScreen;
 import com.interrupt.dungeoneer.screens.LoadingScreen;
 import com.interrupt.managers.StringManager;
 
@@ -113,9 +115,7 @@ public class LevelsOverlay extends WindowOverlay {
             lb.addListener(new ClickListener() {
                 @Override
                 public void clicked(InputEvent event, float x, float y) {
-                    //Audio.playSound("/ui/ui_button_click.mp3", 0.3f);
-                    // GameApplication.SetScreen(new LoadingScreen(saveGames[selectedSave] == null ? StringManager.get("screens.MainMenuScreen.creatingDungeon") : StringManager.get("screens.MainMenuScreen.loadingSaveSlot"), selectedSave));
-                    // GameApplication.SetScreen(new LoadingScreen(StringManager.get("Loading level: "+levelName), -1));
+                    OverlayManager.instance.remove(thisOverlay);
                     GameManager gm = new GameManager(GameApplication.instance);
                     Level lvl = new Level();
                     lvl.theme = "TEST";
@@ -124,9 +124,7 @@ public class LevelsOverlay extends WindowOverlay {
                     lvl.fogEnd = 30.0f;
                     lvl.generated = false;
                     lvl.levelFileName = "levels/"+level;
-                    gm.startGame(lvl);
-                    // lvl.load();
-                    OverlayManager.instance.remove(thisOverlay);
+                    GameApplication.SetScreen(new GameScreen(lvl, gm));
                 }
             });
 
