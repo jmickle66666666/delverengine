@@ -1,5 +1,6 @@
 package com.interrupt.dungeoneer.overlays;
 
+import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input.Keys;
 import com.badlogic.gdx.files.FileHandle;
 import com.badlogic.gdx.scenes.scene2d.InputEvent;
@@ -115,8 +116,6 @@ public class LevelsOverlay extends WindowOverlay {
             lb.addListener(new ClickListener() {
                 @Override
                 public void clicked(InputEvent event, float x, float y) {
-                    OverlayManager.instance.remove(thisOverlay);
-                    GameManager gm = new GameManager(GameApplication.instance);
                     Level lvl = new Level();
                     lvl.theme = "TEST";
                     lvl.levelName = levelName;
@@ -124,7 +123,9 @@ public class LevelsOverlay extends WindowOverlay {
                     lvl.fogEnd = 30.0f;
                     lvl.generated = false;
                     lvl.levelFileName = "levels/"+level;
-                    GameApplication.SetScreen(new GameScreen(lvl, gm));
+
+                    OverlayManager.instance.remove(thisOverlay);
+					GameApplication.instance.createFromStartLevel(lvl);
                 }
             });
 
