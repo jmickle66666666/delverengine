@@ -1,11 +1,10 @@
 package com.interrupt.dungeoneer.editor;
 
-import com.badlogic.gdx.ApplicationListener;
-import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.Input;
+import com.badlogic.gdx.*;
 import com.badlogic.gdx.Input.Buttons;
 import com.badlogic.gdx.Input.Keys;
-import com.badlogic.gdx.InputMultiplexer;
+import com.badlogic.gdx.backends.lwjgl.LwjglApplication;
+import com.badlogic.gdx.backends.lwjgl.LwjglApplicationConfiguration;
 import com.badlogic.gdx.graphics.Camera;
 import com.badlogic.gdx.graphics.*;
 import com.badlogic.gdx.graphics.Pixmap.Format;
@@ -17,7 +16,6 @@ import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.graphics.g3d.decals.Decal;
 import com.badlogic.gdx.graphics.g3d.decals.DecalBatch;
 import com.badlogic.gdx.graphics.glutils.FrameBuffer;
-import com.badlogic.gdx.graphics.glutils.ShaderProgram;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer.ShapeType;
 import com.badlogic.gdx.math.*;
@@ -25,19 +23,24 @@ import com.badlogic.gdx.math.collision.BoundingBox;
 import com.badlogic.gdx.math.collision.Ray;
 import com.badlogic.gdx.scenes.scene2d.InputEvent;
 import com.badlogic.gdx.scenes.scene2d.Stage;
-import com.badlogic.gdx.scenes.scene2d.ui.CheckBox;
-import com.badlogic.gdx.scenes.scene2d.ui.Image;
-import com.badlogic.gdx.scenes.scene2d.ui.Label;
-import com.badlogic.gdx.scenes.scene2d.ui.Table;
+import com.badlogic.gdx.scenes.scene2d.ui.*;
 import com.badlogic.gdx.scenes.scene2d.utils.ClickListener;
 import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
 import com.badlogic.gdx.utils.*;
+import com.interrupt.dungeoneer.Audio;
 import com.interrupt.dungeoneer.*;
 import com.interrupt.dungeoneer.collision.Collidor;
+import com.interrupt.dungeoneer.editor.file.EditorFile;
 import com.interrupt.dungeoneer.editor.gfx.SurfacePickerDecal;
+import com.interrupt.dungeoneer.editor.gizmos.Gizmo;
+import com.interrupt.dungeoneer.editor.gizmos.GizmoProvider;
 import com.interrupt.dungeoneer.editor.history.EditorHistory;
+import com.interrupt.dungeoneer.editor.selection.AdjacentTileSelectionInfo;
+import com.interrupt.dungeoneer.editor.selection.TileSelectionInfo;
 import com.interrupt.dungeoneer.editor.ui.EditorUi;
+import com.interrupt.dungeoneer.editor.ui.SaveChangesDialog;
 import com.interrupt.dungeoneer.editor.ui.TextureRegionPicker;
+import com.interrupt.dungeoneer.editor.utils.LiveReload;
 import com.interrupt.dungeoneer.entities.*;
 import com.interrupt.dungeoneer.entities.Entity.ArtType;
 import com.interrupt.dungeoneer.entities.Entity.EditorState;
@@ -51,13 +54,14 @@ import com.interrupt.dungeoneer.game.Level;
 import com.interrupt.dungeoneer.game.Level.Source;
 import com.interrupt.dungeoneer.generator.DungeonGenerator;
 import com.interrupt.dungeoneer.generator.GenInfo.Markers;
-import com.interrupt.dungeoneer.gfx.*;
+import com.interrupt.dungeoneer.gfx.GlRenderer;
+import com.interrupt.dungeoneer.gfx.SpriteGroupStrategy;
+import com.interrupt.dungeoneer.gfx.TextureAtlas;
+import com.interrupt.dungeoneer.gfx.WorldChunk;
 import com.interrupt.dungeoneer.gfx.drawables.DrawableMesh;
 import com.interrupt.dungeoneer.gfx.drawables.DrawableSprite;
 import com.interrupt.dungeoneer.interfaces.Directional;
-import com.interrupt.dungeoneer.partitioning.TriangleSpatialHash;
 import com.interrupt.dungeoneer.serializers.KryoSerializer;
-import com.interrupt.dungeoneer.tiles.ExitTile;
 import com.interrupt.dungeoneer.tiles.Tile;
 import com.interrupt.dungeoneer.tiles.Tile.TileSpaceType;
 import com.interrupt.helpers.FloatTuple;
@@ -68,9 +72,17 @@ import com.noise.PerlinNoise;
 
 import javax.swing.*;
 import java.util.HashMap;
-import java.util.Map.Entry;
 
-public class EditorFrame implements ApplicationListener {
+public class EditorApplication implements ApplicationListener {
+	public JFrame frame;
+	public EditorUi ui = null;
+	public PerspectiveCamera camera = new PerspectiveCamera();
+	public EditorCameraController cameraController = null;
+	public EditorHistory history;
+	public Player player = null;
+	public Level level = null;
+	public GlRenderer renderer = null;
+	public EditorFile file = null;
 
     private EditorClipboard clipboard = null;
 
@@ -78,8 +90,6 @@ public class EditorFrame implements ApplicationListener {
 	public enum ControlVertex { slopeNW, slopeNE, slopeSW, slopeSE, ceilNW, ceilNE, ceilSW, ceilSE }
 	public enum DragMode { NONE, XY, X, Y, Z }
 	public enum MoveMode { NONE, DRAG, ROTATE }
-
-	public EditorHistory history = new EditorHistory();
 
 	public Color controlPointColor = new Color(1f, 0.4f, 0f, 1f);
 
@@ -108,10 +118,7 @@ public class EditorFrame implements ApplicationListener {
 
 	public boolean canDelete = true;
 
-    protected static TriangleSpatialHash triangleSpatialHash = new TriangleSpatialHash(1);
-    protected static Array<Triangle> staticMeshCollisionTriangles = new Array<Triangle>();
-
-    protected Array<Vector3> spatialWorkerList = new Array<Vector3>();
+	protected Array<Vector3> spatialWorkerList = new Array<Vector3>();
 
 	public enum TileSurface {Ceiling, Floor, UpperWall, LowerWall};
 
@@ -124,12 +131,7 @@ public class EditorFrame implements ApplicationListener {
 
 	public PickedSurface pickedSurface = new PickedSurface();
 
-    Matrix4 selectionTempMatrix = new Matrix4();
-	Matrix4 selectionTempMatrix2 = new Matrix4();
-	BoundingBox selectionTempBoundingBox = new BoundingBox();
-
 	Vector3 selectionTempVector1 = new Vector3();
-	Vector3 selectionTempVector2 = new Vector3();
 
 	FrameBuffer pickerFrameBuffer = null;
 	Pixmap pickerPixelBuffer = null;
@@ -151,7 +153,7 @@ public class EditorFrame implements ApplicationListener {
 	}
 
 	private class ControlPoint {
-		public Vector3 point = null;
+		public Vector3 point;
 		public ControlPointType controlPointType;
 
 		public Array<ControlPointVertex> vertices = new Array<ControlPointVertex>();
@@ -208,8 +210,6 @@ public class EditorFrame implements ApplicationListener {
 		}
 	}
 
-	private JFrame window = null;
-
 	private GameInput input;
     public EditorInput editorInput;
     private InputMultiplexer inputMultiplexer;
@@ -218,10 +218,6 @@ public class EditorFrame implements ApplicationListener {
     private int curHeight;
 
 	private boolean rightClickWasDown = false;
-
-	public TesselatorGroups tesselators;
-
-    public PerspectiveCamera camera = new PerspectiveCamera();
 
     protected Pixmap wallPixmap;
     protected Texture selectionTex;
@@ -234,53 +230,25 @@ public class EditorFrame implements ApplicationListener {
 
     protected EntityManager entityManager;
 
-    Level level = null;
-
-    float camX = 7.5f;
-    float camY = 8;
-    float camZ = 4.5f;
-
-    float rotX = 0;
-    float rotY = 20f;
-    double rota = 0;
-	double rotya = 0;
-	float rotYClamp = 1.571f;
-
-    double walkVel = 0.05;
-	double walkSpeed = 0.15;
-	double rotSpeed = 0.009;
-	double maxRot = 0.8;
-
-	boolean readFloorMove, readCeilMove, readRotate;
-	private int readFloorMoveCount, readCeilMoveCount;
+	boolean readRotate;
 
 	Mesh cubeMesh;
     Mesh gridMesh;
-
-	GlRenderer renderer = null;
 
     private boolean slopePointMode = false;
     private boolean slopeEdgeMode = false;
     private int slopeSelNum = 0;
 
-    private boolean selected = false;
+    public boolean selected = false;
 
     private boolean tileDragging = false;
-    private int selectionX = 0;
-    private int selectionY = 0;
-    private int selectionWidth = 1;
-    private int selectionHeight = 1;
-	private Vector2 selectionHeights = new Vector2();
+
     private boolean vertexSelectionMode = false;
 
     public float time = 0;
 
-    public String curFileName = "";
-
 	protected DecalBatch spriteBatch;
     protected DecalBatch pointBatch;
-
-    public EditorUi editorUi = null;
 
     Image wallPickerButton = null;
     Image bottomWallPickerButton = null;
@@ -291,7 +259,7 @@ public class EditorFrame implements ApplicationListener {
     protected Pool<Decal> decalPool = new Pool<Decal>(128) {
     	@Override
         protected Decal newObject () {
-                return Decal.newDecal(1, 1, editorSprites[0]);
+            return Decal.newDecal(1, 1, editorSprites[0]);
         }
     };
     protected Array<Decal> usedDecals = new Array<Decal>(256);
@@ -299,12 +267,9 @@ public class EditorFrame implements ApplicationListener {
     private int messageTimer = 0;
     private String message = "";
 
-	private Player player = null;
+	private boolean showLights = false;
+	private boolean lightsDirty = true;
 
-    private boolean showLights = false;
-
-	private Entity hoveredEntity = null;
-    private Entity pickedEntity = null;
     private boolean movingEntity = false;
 	private DragMode dragMode = DragMode.NONE;
     private MoveMode moveMode = MoveMode.DRAG;
@@ -312,8 +277,6 @@ public class EditorFrame implements ApplicationListener {
 
     private Vector3 rotateStart = null;
     private Vector3 rotateStartIntersection = null;
-
-    private Array<Entity> additionalSelected = new Array<Entity>();
 
     private boolean readLeftClick = false;
     private boolean readRightClick = false;
@@ -327,26 +290,19 @@ public class EditorFrame implements ApplicationListener {
     private ShapeRenderer pointRenderer;
     private ShapeRenderer boxRenderer;
 
-    private boolean showCollisionBoxes = false;
+    private boolean showGizmos = false;
 
 	Color hoveredColor = new Color(0.5f, 1f, 0.5f, 1f);
 	Color selectedColor = new Color(1f, 0.5f, 0.5f, 1f);
 
     Vector3 intersection = new Vector3();
-	Vector3 testPos = new Vector3();
 	Vector3 tempVector1 = new Vector3();
-
-	Color tempColor = new Color();
 
 	DrawableSprite unknownEntityMarker = new DrawableSprite();
 
 	Array<ControlPoint> controlPoints = new Array<ControlPoint>();
 	ControlPoint pickedControlPoint = null;
 	public boolean movingControlPoint = false;
-
-	Color colorDarkRed = new Color(0.8f,0,0,0.3f);
-	Color colorDarkBlue = new Color(0,0,0.8f,0.3f);
-	Color colorDarkGreen = new Color(0,0.8f,0,0.3f);
 
 	Vector3 xGridStart = new Vector3();
 	Vector3 xGridEnd = new Vector3();
@@ -360,25 +316,68 @@ public class EditorFrame implements ApplicationListener {
 
 	Vector3 rayOutVector = new Vector3();
 
-	private boolean isOnWindows = System.getProperty("os.name").startsWith("Windows");
+	private LiveReload liveReload;
 
-	public Editor editor;
+	public EditorApplication() {
+		frame = new JFrame("DelvEdit");
 
-	/**
-	 * @wbp.parser.entryPoint
-	 */
-	public EditorFrame(JFrame window, Editor editor) {
-		this.window = window;
-		this.editor = editor;
+		Graphics.DisplayMode defaultMode = LwjglApplicationConfiguration.getDesktopDisplayMode();
+
+		LwjglApplicationConfiguration config = new LwjglApplicationConfiguration();
+		config.title = "New Level - DelvEdit";
+		config.fullscreen = false;
+		config.width = defaultMode.width;
+		config.height = defaultMode.height;
+		config.vSyncEnabled = true;
+		config.foregroundFPS = 120;
+		config.backgroundFPS = 30;
+		config.stencil = 8;
+
+		config.addIcon("icon-128.png", Files.FileType.Internal); // 128x128 icon (mac OS)
+		config.addIcon("icon-32.png", Files.FileType.Internal);  // 32x32 icon (Windows + Linux)
+		config.addIcon("icon-16.png", Files.FileType.Internal);  // 16x16 icon (Windows)
+
+		new LwjglApplication(this, config) {
+		    public void close() {
+		        Editor.dispose();
+		        super.exit();
+		        System.exit(0);
+            }
+
+		    @Override
+            public void exit() {
+                if (!file.isDirty()) {
+                    close();
+                }
+
+                Dialog savePrompt = new SaveChangesDialog() {
+                    @Override
+                    public void onSave() {
+                        Editor.app.file.save();
+                    }
+
+                    @Override
+                    public void onDontSave() {
+                        close();
+                    }
+                };
+
+                savePrompt.show(Editor.app.ui.getStage());
+            }
+        };
 	}
 
 	public void init(){
+        renderer = new GlRenderer();
+        EditorArt.initAtlases();
+
 		input = new GameInput();
 		Gdx.input.setInputProcessor( input );
 
-        renderer.init();
+		editorInput = new EditorInput();
 
-        tesselators = new TesselatorGroups();
+        renderer.init();
+		renderer.enableLighting = showLights;
 
 		cubeMesh = genCube();
 		spriteBatch = new DecalBatch(new SpriteGroupStrategy(camera, null, GlRenderer.worldShaderInfo, 1));
@@ -386,8 +385,13 @@ public class EditorFrame implements ApplicationListener {
 		unknownEntityMarker.tex = 1000;
 		unknownEntityMarker.artType = ArtType.hidden;
 
-		StringManager.init();
+		liveReload = new LiveReload();
+		liveReload.init();
 
+		cameraController = new EditorCameraController();
+		cameraController.init();
+
+		StringManager.init();
 		Game.init();
 
 		// load the entity templates
@@ -398,11 +402,35 @@ public class EditorFrame implements ApplicationListener {
 			// whoops
 			Gdx.app.log("Editor", "Error loading entities.dat: " + ex.getMessage());
 		}
+
+        Gdx.input.setCursorCatched(false);
+        initTextures();
+
+        pickedWallTextureAtlas = pickedWallBottomTextureAtlas = pickedFloorTextureAtlas = pickedCeilingTextureAtlas =
+                TextureAtlas.cachedRepeatingAtlases.firstKey();
+
+        level = new Level(17,17);
+        Tile t = new Tile();
+        t.floorHeight = -0.5f;
+        t.ceilHeight = 0.5f;
+        level.setTile(7, 7, t);
+
+        history = new EditorHistory();
+        file = new EditorFile();
+        history.saveState(Editor.app.level);
+        file.markClean();
+
+        gridMesh = genGrid(level.width,level.height);
 	}
 
 	@Override
 	public void dispose() {
-		if(gameApp != null) gameApp.dispose();
+		if(gameApp != null) {
+			gameApp.dispose();
+		}
+
+		cameraController.dispose();
+		liveReload.dispose();
 	}
 
 	@Override
@@ -463,16 +491,17 @@ public class EditorFrame implements ApplicationListener {
 				Gdx.input.setInputProcessor( inputMultiplexer );
 				input.clear();
 
-				camX = Game.instance.player.x;
-				camZ = Game.instance.player.z + 0.5f;
-				camY = Game.instance.player.y;
+				float x = Game.instance.player.x;
+				float z = Game.instance.player.z + Game.instance.player.eyeHeight;
+				float y = Game.instance.player.y;
 
-				rotX = Game.instance.player.rot + 3.14159265f;
-				rotY = -(Game.instance.player.yrot - 18.9f);
+				float rotationX = Game.instance.player.rot + 3.14159265f;
+				float rotationY = -Game.instance.player.yrot;
+
+				cameraController.setPosition(x, y, z);
+				cameraController.setRotation(rotationX, rotationY);
 
 				Audio.stopLoopingSounds();
-
-				tesselators.refresh();
 			}
 
 			return;
@@ -484,15 +513,15 @@ public class EditorFrame implements ApplicationListener {
 		renderer.clearLights();
 		renderer.clearDecals();
 
-		if(!editorUi.isShowingMenuOrModal() && pickedControlPoint == null && hoveredEntity == null && pickedEntity == null) {
+		if(!ui.isShowingMenuOrModal() && pickedControlPoint == null && Editor.selection.hovered == null && Editor.selection.picked == null) {
 			updatePickedSurface();
 		}
 
-		if((!Gdx.input.isButtonPressed(Buttons.LEFT) || editorUi.isShowingMenuOrModal()) && pickedControlPoint == null && hoveredEntity == null && pickedEntity == null) {
+		if((!Gdx.input.isButtonPressed(Buttons.LEFT) || ui.isShowingMenuOrModal()) && pickedControlPoint == null && Editor.selection.hovered == null && Editor.selection.picked == null) {
 			renderPickedSurface();
 		}
 
-        Stage stage = editorUi.getStage();
+        Stage stage = ui.getStage();
         if(stage != null) {
             stage.act(Gdx.graphics.getDeltaTime());
             stage.draw();
@@ -507,6 +536,11 @@ public class EditorFrame implements ApplicationListener {
 	Vector3 intersectNormal = new Vector3();
 	Vector3 intersectTemp = new Vector3();
 	Array<Entity> selectedEntities = new Array<Entity>();
+
+	// Track the starting point of the selection area.
+	int selStartX = 0;
+	int selStartY = 0;
+
 	public void draw() {
 		GL20 gl = renderer.getGL();
         GlRenderer.clearBoundTexture();
@@ -529,11 +563,7 @@ public class EditorFrame implements ApplicationListener {
 		GlRenderer.fogEnd = level.fogEnd;
 		GlRenderer.viewDistance = level.viewDistance;
 
-		camera.direction.set(0, 0, 1);
-		camera.up.set(0, 1, 0);
-		camera.rotate(rotY * 57.2957795f, 1f, 0, 0);
-		camera.rotate((float)(rotX + 3.14) * 57.2957795f, 0, 1f, 0);
-		camera.update();
+		cameraController.draw();
 
 		renderer.updateDynamicLights(camera);
 		renderer.updateShaderAttributes();
@@ -562,30 +592,13 @@ public class EditorFrame implements ApplicationListener {
 		gl.glClearColor(0.2235f, 0.2235f, 0.2235f, 1);
 		gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT | GL20.GL_STENCIL_BUFFER_BIT);
 
-		Tesselate();
+		if(showLights && lightsDirty) {
+			lightsDirty = false;
+			level.updateLights(Source.EDITOR);
+		}
 
-        tesselators.world.render();
-
-        GlRenderer.waterShaderInfo.setScrollSpeed(0f);
-        tesselators.water.render();
-
-        GlRenderer.waterShaderInfo.setScrollSpeed(0.03f);
-        tesselators.waterfall.render();
-
-        gl.glDepthFunc(GL20.GL_LEQUAL);
-
-        GlRenderer.waterEdgeShaderInfo.setAttribute("u_noise_mod", 1f);
-        GlRenderer.waterEdgeShaderInfo.setAttribute("u_waveMod", 1f);
-
-        Gdx.gl.glEnable(GL20.GL_POLYGON_OFFSET_FILL);
-        Gdx.gl.glPolygonOffset(-1f, -1f);
-
-        tesselators.waterEdges.render();
-
-        GlRenderer.waterEdgeShaderInfo.setAttribute("u_noise_mod", 4f);
-        GlRenderer.waterEdgeShaderInfo.setAttribute("u_waveMod", 0f);
-
-        tesselators.waterfallEdges.render();
+        renderer.Tesselate(level);
+        renderer.renderWorld(level);
 
 		gl.glDisable(GL20.GL_CULL_FACE);
 
@@ -603,10 +616,18 @@ public class EditorFrame implements ApplicationListener {
 		// set selection data
 		for(int i = 0; i < level.entities.size; i++) {
 			Entity e = level.entities.get(i);
-			if(e == pickedEntity) e.editorState = EditorState.picked;
-			else if(additionalSelected.contains(e, true)) e.editorState = EditorState.picked;
-			else if(e == hoveredEntity) e.editorState = EditorState.hovered;
-			else e.editorState = EditorState.none;
+			if(e == Editor.selection.picked) {
+				e.editorState = EditorState.picked;
+			}
+			else if(Editor.selection.isSelected(e)) {
+				e.editorState = EditorState.picked;
+			}
+			else if(e == Editor.selection.hovered) {
+				e.editorState = EditorState.hovered;
+			}
+			else {
+				e.editorState = EditorState.none;
+			}
 
 			if(e.editorState != EditorState.none) {
 				selectedEntities.add(e);
@@ -615,9 +636,15 @@ public class EditorFrame implements ApplicationListener {
 
 		for(int i = 0; i < level.non_collidable_entities.size; i++) {
 			Entity e = level.non_collidable_entities.get(i);
-			if(e == pickedEntity) e.editorState = EditorState.picked;
-			else if(e == hoveredEntity) e.editorState = EditorState.hovered;
-			else e.editorState = EditorState.none;
+			if(e == Editor.selection.picked) {
+				e.editorState = EditorState.picked;
+			}
+			else if(e == Editor.selection.hovered) {
+				e.editorState = EditorState.hovered;
+			}
+			else {
+				e.editorState = EditorState.none;
+			}
 
 			if(e.editorState != EditorState.none) {
 				selectedEntities.add(e);
@@ -633,46 +660,6 @@ public class EditorFrame implements ApplicationListener {
 
 		Gdx.gl.glEnable(GL20.GL_ALPHA);
         Gdx.gl.glEnable(GL20.GL_CULL_FACE);
-		if(staticMeshBatch == null) {
-			staticMeshCollisionTriangles.clear();
-			EditorCachePools.freeAllCaches();
-
-			// sort the mesh entities into buckets, determined by their texture
-			HashMap<String, Array<Entity>> meshesByTexture = new HashMap<String, Array<Entity>>();
-			groupStaticMeshesByTexture(level.entities, meshesByTexture);
-
-			// make a static mesh from each entity bucket
-			staticMeshBatch = new HashMap<String, Array<Mesh>>();
-			for(String key : meshesByTexture.keySet()) {
-				staticMeshBatch.put(key, mergeStaticMeshes(level, meshesByTexture.get(key)));
-			}
-
-			// cleanup, don't need the mesh buckets anmyore
-			meshesByTexture.clear();
-
-			refreshTriangleSpatialHash();
-		}
-		if(staticMeshBatch != null) {
-			for(Entry<String, Array<Mesh>> meshBuckets : staticMeshBatch.entrySet()) {
-				Texture t = Art.cachedTextures.get(meshBuckets.getKey());
-				if(t != null) GlRenderer.bindTexture(t);
-				if(meshBuckets.getValue() != null) {
-					GlRenderer.worldShaderInfo.setAttributes(camera.combined,
-							0,
-							1000,
-							1000,
-							time,
-							Color.BLACK,
-							Color.BLACK);
-
-					GlRenderer.worldShaderInfo.begin();
-					for(Mesh m : meshBuckets.getValue()) {
-						m.render(GlRenderer.worldShaderInfo.shader, GL20.GL_TRIANGLES);
-					}
-					GlRenderer.worldShaderInfo.end();
-				}
-			}
-		}
 
 		renderer.renderDecals();
 		renderer.renderStencilPasses();
@@ -730,31 +717,40 @@ public class EditorFrame implements ApplicationListener {
 
 
 		boolean shouldDrawBox = !pickedSurface.isPicked;
-		if(pickedSurface.isPicked && editorInput.isButtonPressed(Input.Buttons.LEFT) && !editorUi.isShowingMenuOrModal()) {
+		if(pickedSurface.isPicked && editorInput.isButtonPressed(Input.Buttons.LEFT) && !ui.isShowingMenuOrModal()) {
 			shouldDrawBox = true;
 		}
 
-		if(pickedEntity == null && hoveredEntity == null || tileDragging) {
+		// don't draw the box when freelooking
+		if(shouldDrawBox && !selected && Gdx.input.isCursorCatched()) {
+			shouldDrawBox = false;
+		}
+
+		if(Editor.selection.picked == null && Editor.selection.hovered == null || tileDragging) {
 			if(!selected || (!(pickedControlPoint != null || movingControlPoint) &&
                     editorInput.isButtonPressed(Input.Buttons.LEFT) && Gdx.input.justTouched())) {
 
 				Ray ray = camera.getPickRay(Gdx.input.getX(), Gdx.input.getY());
 				Vector3 start = tempVec1.set(ray.origin);
 				Vector3 end = tempVec2.set(intpos.x, intpos.y, intpos.z);
-				Float distance = start.sub(end).len();
+				float distance = start.sub(end).len();
 
 				end = ray.getEndPoint(rayOutVector, distance + 0.005f);
 
-				selectionX = (int)end.x;
-				selectionY = (int)end.z;
+						// Tile selection bounding
+				Editor.selection.tiles.x = (int)end.x;
+				Editor.selection.tiles.y = (int)end.z;
 
-				if(selectionX < 0) selectionX = 0;
-				if(selectionX >= level.width) selectionX = level.width - 1;
+				if(Editor.selection.tiles.x < 0) Editor.selection.tiles.x = 0;
+				if(Editor.selection.tiles.x >= level.width) Editor.selection.tiles.x = level.width - 1;
 
-				if(selectionY < 0) selectionY = 0;
-				if(selectionY >= level.height) selectionY = level.height - 1;
+				if(Editor.selection.tiles.y < 0) Editor.selection.tiles.y = 0;
+				if(Editor.selection.tiles.y >= level.height) Editor.selection.tiles.y = level.height - 1;
 
-                selectionWidth = selectionHeight = 1;
+                Editor.selection.tiles.width = Editor.selection.tiles.height = 1;
+				selStartX = Editor.selection.tiles.x;
+				selStartY = Editor.selection.tiles.y;
+				controlPoints.clear();
 			}
 			else if(editorInput.isButtonPressed(Input.Buttons.LEFT)) {
 				if(Gdx.input.isKeyPressed(Keys.ALT_LEFT)) {
@@ -771,24 +767,21 @@ public class EditorFrame implements ApplicationListener {
 					movingControlPoint = true;
 				}
 				else {
-
 					Intersector.intersectRayPlane(camera.getPickRay(Gdx.input.getX(), Gdx.input.getY()), p, intpos);
 
 					if (pickedControlPoint != null || movingControlPoint) {
 						// don't modify selection area!
 						movingControlPoint = true;
 					} else {
+						// The user is dragging the selection area to set its size. Update the selection area based on their mouse position.
+						int newX = MathUtils.clamp((int) intpos.x, 0, level.width - 1);
+						int newY = MathUtils.clamp((int) intpos.z, 0, level.height - 1);
 
-						float selectXMod = 0.8f;
-						float selectYMod = 0.8f;
-						if (intpos.x < selectionX) selectXMod *= -1f;
-						if (intpos.z < selectionY) selectYMod *= -1f;
-
-						selectionWidth = ((int) (intpos.x + selectXMod) - selectionX);
-						selectionHeight = ((int) (intpos.z + selectYMod) - selectionY);
-
-						if (selectionWidth == 0) selectionWidth = 1;
-						if (selectionHeight == 0) selectionHeight = 1;
+						Editor.selection.tiles.width = Math.abs(selStartX - newX) + 1;
+						Editor.selection.tiles.height = Math.abs(selStartY - newY) + 1;
+						// Always make this the lowest corner so that the selection size, which is relative to this, is positive.
+						Editor.selection.tiles.x = Math.min(newX, selStartX);
+						Editor.selection.tiles.y = Math.min(newY, selStartY);
 
 						controlPoints.clear();
 					}
@@ -806,59 +799,50 @@ public class EditorFrame implements ApplicationListener {
 
             GlRenderer.bindTexture(selectionTex);
 
-			int scaleWidth = selectionWidth;
-			int scaleHeight = selectionHeight;
-			int selX = selectionX;
-			int selY = selectionY;
-
-			Tile t = level.getTileOrNull(selX,selY);
-			if(t!= null && !t.renderSolid) {
-				float selZ = t.floorHeight;
-				if(intpos != null) {
-					selZ = (int)((intpos.y - 0.001f) * 16) / 16f;
-				}
-
-				if(!selected) selectionHeights.set(t.ceilHeight, selZ);
-			}
-			else {
-				TextureAtlas atlas = TextureAtlas.getRepeatingAtlasByIndex(pickedWallTextureAtlas);
-				float size = atlas.rowScale * atlas.scale;
-				if(!selected) selectionHeights.set(size - 0.5f, -0.5f);
+			Tile t = Editor.selection.tiles.first();
+			if(t == null || t.renderSolid) {
+				// TODO: Set cursor height to match atlas.
+				//TextureAtlas atlas = TextureAtlas.getRepeatingAtlasByIndex(pickedWallTextureAtlas);
+				//float size = atlas.rowScale * atlas.scale;
+				//if(!selected) selectionHeights.set(size - 0.5f, -0.5f);
 			}
 
 			if(slopePointMode || slopeEdgeMode)
 				drawSlopeLines(slopeSelNum, slopeEdgeMode);
 
-			if(scaleWidth < 0) selX += 1;
-			if(scaleHeight < 0) selY += 1;
-
-			float xOffset = scaleWidth > 0 ? 0.015f : - 0.015f;
-			float yOffset = scaleHeight > 0 ? 0.015f : - 0.015f;
-
+			// Draw selection
 			if(shouldDrawBox) {
-				boxRenderer.translate(selX + xOffset, selectionHeights.x + 0.008f, selY + yOffset);
 				boxRenderer.setColor(0.75f, 0.75f, 0.75f, 0.5f);
 				boxRenderer.begin(ShapeType.Line);
 
-				boxRenderer.box(0, 0, 0, scaleWidth - (xOffset * 2f), (selectionHeights.y - selectionHeights.x) - 0.015f, -scaleHeight + (yOffset * 2f));
+				BoundingBox bounds = Editor.selection.tiles.getBounds();
+				boxRenderer.box(bounds.min.x, bounds.min.z, bounds.min.y, bounds.getWidth(), bounds.getDepth(), -bounds.getHeight());
+
 				boxRenderer.end();
-				boxRenderer.identity();
 			}
 		}
 
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE);
 
-		if(pickedEntity instanceof ProjectedDecal) renderProjection(((ProjectedDecal)pickedEntity).perspective);
-		else if(pickedEntity instanceof Mover) renderMoverVizualization((Mover)pickedEntity);
-		for(Entity picked : additionalSelected) {
-			if(picked instanceof ProjectedDecal) renderProjection(((ProjectedDecal)picked).perspective);
-			else if(picked instanceof Mover) renderMoverVizualization((Mover)picked);
+		if(Editor.selection.picked instanceof ProjectedDecal) {
+			renderProjection(((ProjectedDecal) Editor.selection.picked).perspective);
+		}
+		else if(Editor.selection.picked instanceof Mover) {
+			renderMoverVizualization((Mover) Editor.selection.picked);
+		}
+		for(Entity selectedEntity : Editor.selection.selected) {
+			if(selectedEntity instanceof ProjectedDecal) {
+				renderProjection(((ProjectedDecal)selectedEntity).perspective);
+			}
+			else if(selectedEntity instanceof Mover) {
+				renderMoverVizualization((Mover)selectedEntity);
+			}
 		}
 
 		// ROTATE
-		if(moveMode == MoveMode.ROTATE && pickedEntity instanceof Directional) {
-			Directional pickedDirectional = (Directional) pickedEntity;
-			dragPlane = new Plane(new Vector3(0,-1,0), pickedEntity.z);
+		if(moveMode == MoveMode.ROTATE && Editor.selection.picked instanceof Directional) {
+			Directional pickedDirectional = (Directional) Editor.selection.picked;
+			dragPlane = new Plane(new Vector3(0,-1,0), Editor.selection.picked.z);
 
 			if(Intersector.intersectRayPlane(camera.getPickRay(Gdx.input.getX(), Gdx.input.getY()), dragPlane, intpos)) {
 
@@ -868,14 +852,14 @@ public class EditorFrame implements ApplicationListener {
 				}
 
 				Vector3 rotateDirection = new Vector3(
-						pickedEntity.x - intpos.x,
-						pickedEntity.y - intpos.z,
-						pickedEntity.z - intpos.y).nor();
+						Editor.selection.picked.x - intpos.x,
+						Editor.selection.picked.y - intpos.z,
+						Editor.selection.picked.z - intpos.y).nor();
 
 				Vector3 rotateStartDirection = new Vector3(
-						pickedEntity.x - rotateStartIntersection.x,
-						pickedEntity.y - rotateStartIntersection.z,
-						pickedEntity.z - rotateStartIntersection.y).nor();
+						Editor.selection.picked.x - rotateStartIntersection.x,
+						Editor.selection.picked.y - rotateStartIntersection.z,
+						Editor.selection.picked.z - rotateStartIntersection.y).nor();
 
 				float yaw = (float)Math.atan2(rotateDirection.x, rotateDirection.y);
 				float startYaw = (float)Math.atan2(rotateStartDirection.x, rotateStartDirection.y);
@@ -906,29 +890,18 @@ public class EditorFrame implements ApplicationListener {
 						pickedDirectional.setRotation(rx, ry, (int)(Math.floor(pickedDirectional.getRotation().z) * 0.04444444444444) / 0.04444444444444f);
 				}
 
-				refreshEntity(pickedEntity);
+				refreshEntity(Editor.selection.picked);
 			}
 		}
 
 		// drag tile
 		if(selected && (!readLeftClick || movingControlPoint)) {
-			int selX = selectionX;
-			int selY = selectionY;
-			int selWidth = selectionWidth;
-			int selHeight = selectionHeight;
+			int selX = Editor.selection.tiles.x;
+			int selY = Editor.selection.tiles.y;
+			int selWidth = Editor.selection.tiles.width;
+			int selHeight = Editor.selection.tiles.height;
 
-			if(selWidth < 0) {
-				selX = selX + selWidth;
-				selWidth *= -1;
-				selX += 1;
-			}
-			if(selHeight < 0) {
-				selY = selY + selHeight;
-				selHeight *= -1;
-				selY += 1;
-			}
-
-			Tile startTile = level.getTile(selectionX, selectionY);
+			Tile startTile = Editor.selection.tiles.first();
 
 			// init the control point list if needed
 			if(controlPoints.size == 0) {
@@ -961,31 +934,29 @@ public class EditorFrame implements ApplicationListener {
 					controlPoints.add(new ControlPoint(eastEdgeFloor, ControlPointType.eastFloor));
 				}
 				else {
-					for(int xx = selX; xx < selX + selWidth; xx++) {
-						for(int yy = selY; yy < selY + selHeight; yy++) {
-							Tile current = level.getTileOrNull(xx, yy);
+                    for (TileSelectionInfo info : Editor.selection.tiles) {
+                        Tile current = info.tile;
 
-							if(current != null && !current.renderSolid) {
-								if(current.tileSpaceType != TileSpaceType.OPEN_SE) {
-									controlPoints.add(new ControlPoint(new Vector3(xx, current.ceilHeight + current.ceilSlopeNE, yy), new ControlPointVertex(current,ControlVertex.ceilNE)));
-									controlPoints.add(new ControlPoint(new Vector3(xx, current.floorHeight + current.slopeNE, yy), new ControlPointVertex(current,ControlVertex.slopeNE)));
-								}
+                        if(current != null && !current.renderSolid) {
+                            if(current.tileSpaceType != TileSpaceType.OPEN_SE) {
+                                controlPoints.add(new ControlPoint(new Vector3(info.x, current.ceilHeight + current.ceilSlopeNE, info.y), new ControlPointVertex(current,ControlVertex.ceilNE)));
+                                controlPoints.add(new ControlPoint(new Vector3(info.x, current.floorHeight + current.slopeNE, info.y), new ControlPointVertex(current,ControlVertex.slopeNE)));
+                            }
 
-								if(current.tileSpaceType != TileSpaceType.OPEN_SW) {
-									controlPoints.add(new ControlPoint(new Vector3(xx + 1, current.ceilHeight + current.ceilSlopeNW, yy), new ControlPointVertex(current,ControlVertex.ceilNW)));
-									controlPoints.add(new ControlPoint(new Vector3(xx + 1, current.floorHeight + current.slopeNW, yy), new ControlPointVertex(current,ControlVertex.slopeNW)));
-								}
+                            if(current.tileSpaceType != TileSpaceType.OPEN_SW) {
+                                controlPoints.add(new ControlPoint(new Vector3(info.x + 1, current.ceilHeight + current.ceilSlopeNW, info.y), new ControlPointVertex(current,ControlVertex.ceilNW)));
+                                controlPoints.add(new ControlPoint(new Vector3(info.x + 1, current.floorHeight + current.slopeNW, info.y), new ControlPointVertex(current,ControlVertex.slopeNW)));
+                            }
 
-								if(current.tileSpaceType != TileSpaceType.OPEN_NE) {
-									controlPoints.add(new ControlPoint(new Vector3(xx, current.ceilHeight + current.ceilSlopeSE, yy + 1), new ControlPointVertex(current,ControlVertex.ceilSE)));
-									controlPoints.add(new ControlPoint(new Vector3(xx, current.floorHeight + current.slopeSE, yy + 1), new ControlPointVertex(current,ControlVertex.slopeSE)));
-								}
+                            if(current.tileSpaceType != TileSpaceType.OPEN_NE) {
+                                controlPoints.add(new ControlPoint(new Vector3(info.x, current.ceilHeight + current.ceilSlopeSE, info.y + 1), new ControlPointVertex(current,ControlVertex.ceilSE)));
+                                controlPoints.add(new ControlPoint(new Vector3(info.x, current.floorHeight + current.slopeSE, info.y + 1), new ControlPointVertex(current,ControlVertex.slopeSE)));
+                            }
 
-								if(current.tileSpaceType != TileSpaceType.OPEN_NW) {
-									controlPoints.add(new ControlPoint(new Vector3(xx + 1, current.ceilHeight + current.ceilSlopeSW, yy + 1), new ControlPointVertex(current,ControlVertex.ceilSW)));
-									controlPoints.add(new ControlPoint(new Vector3(xx + 1, current.floorHeight + current.slopeSW, yy + 1), new ControlPointVertex(current,ControlVertex.slopeSW)));
-								}
-							}
+                            if(current.tileSpaceType != TileSpaceType.OPEN_NW) {
+                                controlPoints.add(new ControlPoint(new Vector3(info.x + 1, current.ceilHeight + current.ceilSlopeSW, info.y + 1), new ControlPointVertex(current,ControlVertex.ceilSW)));
+                                controlPoints.add(new ControlPoint(new Vector3(info.x + 1, current.floorHeight + current.slopeSW, info.y + 1), new ControlPointVertex(current,ControlVertex.slopeSW)));
+                            }
 						}
 					}
 
@@ -1009,7 +980,7 @@ public class EditorFrame implements ApplicationListener {
 			Ray ray = camera.getPickRay(Gdx.input.getX(), Gdx.input.getY());
 			if(!movingControlPoint) pickedControlPoint = null;
 			for(ControlPoint point : controlPoints) {
-				if(!editorUi.isShowingContextMenu()) {
+				if(!ui.isShowingContextMenu()) {
 					if (pickedControlPoint == null && Intersector.intersectRaySphere(ray, point.point, 0.12f, intersection)) {
 						pickedControlPoint = point;
 					}
@@ -1081,144 +1052,133 @@ public class EditorFrame implements ApplicationListener {
 
 				dragOffset = tempVec2.set(dragStart.x - intpos.x,dragStart.y - intpos.y,dragStart.z - intpos.z);
 
-				int selX = selectionX;
-				int selY = selectionY;
-				int selWidth = selectionWidth;
-				int selHeight = selectionHeight;
+				int selX = Editor.selection.tiles.x;
+				int selY = Editor.selection.tiles.y;
+				int selWidth = Editor.selection.tiles.width;
+				int selHeight = Editor.selection.tiles.height;
 
-				if(selWidth < 0) {
-					selX = selX + selWidth;
-					selWidth *= -1;
-					selX += 1;
-				}
-				if(selHeight < 0) {
-					selY = selY + selHeight;
-					selHeight *= -1;
-					selY += 1;
-				}
+                for (TileSelectionInfo info : Editor.selection.tiles) {
+                    Tile t = info.tile;
+                    if (t == null) {
+                        continue;
+                    }
 
-				for(int x = selX; x < selX + selWidth; x++) {
-					for(int y = selY; y < selY + selHeight; y++) {
-						Tile t = level.getTileOrNull(x,y);
-						if(t != null) {
-							if(pickedControlPoint.controlPointType == ControlPointType.floor) {
-								t.floorHeight -= dragOffset.y;
-								t.packHeights();
+                    if(pickedControlPoint.controlPointType == ControlPointType.floor) {
+                        t.floorHeight -= dragOffset.y;
+                        t.packHeights();
 
-                                if(t.getMinOpenHeight() < 0f) {
-                                    t.compressFloorAndCeiling(true);
-                                }
-							}
-							else if(pickedControlPoint.controlPointType == ControlPointType.ceiling) {
-								t.ceilHeight -= dragOffset.y;
-								t.packHeights();
+                        if(t.getMinOpenHeight() < 0f) {
+                            t.compressFloorAndCeiling(true);
+                        }
+                    }
+                    else if(pickedControlPoint.controlPointType == ControlPointType.ceiling) {
+                        t.ceilHeight -= dragOffset.y;
+                        t.packHeights();
 
-                                if(t.getMinOpenHeight() < 0f) {
-                                    t.compressFloorAndCeiling(false);
-                                }
-							}
-							else if(pickedControlPoint.controlPointType == ControlPointType.northCeil || pickedControlPoint.controlPointType == ControlPointType.northFloor) {
+                        if(t.getMinOpenHeight() < 0f) {
+                            t.compressFloorAndCeiling(false);
+                        }
+                    }
+                    else if(pickedControlPoint.controlPointType == ControlPointType.northCeil || pickedControlPoint.controlPointType == ControlPointType.northFloor) {
 
-								float mod = 1 - ((float)y - (float)selY) / (float)selHeight;
-								if(pickedControlPoint.controlPointType == ControlPointType.northCeil) {
-									t.ceilSlopeNE -= dragOffset.y * mod;
-									t.ceilSlopeNW -= dragOffset.y * mod;
-								}
-								else {
-									t.slopeNE -= dragOffset.y * mod;
-									t.slopeNW -= dragOffset.y * mod;
-								}
+                        float mod = 1 - ((float)info.y - (float)selY) / (float)selHeight;
+                        if(pickedControlPoint.controlPointType == ControlPointType.northCeil) {
+                            t.ceilSlopeNE -= dragOffset.y * mod;
+                            t.ceilSlopeNW -= dragOffset.y * mod;
+                        }
+                        else {
+                            t.slopeNE -= dragOffset.y * mod;
+                            t.slopeNW -= dragOffset.y * mod;
+                        }
 
-								if(selHeight > 1) {
-									mod = 1 - ((float)y - (float)selY + 1f) / (float)selHeight;
-									if(pickedControlPoint.controlPointType == ControlPointType.northCeil) {
-										t.ceilSlopeSE -= dragOffset.y * mod;
-										t.ceilSlopeSW -= dragOffset.y * mod;
-									}
-									else {
-										t.slopeSE -= dragOffset.y * mod;
-										t.slopeSW -= dragOffset.y * mod;
-									}
-								}
-								t.packHeights();
-							}
-							else if(pickedControlPoint.controlPointType == ControlPointType.southCeil || pickedControlPoint.controlPointType == ControlPointType.southFloor) {
+                        if(selHeight > 1) {
+                            mod = 1 - ((float)info.y - (float)selY + 1f) / (float)selHeight;
+                            if(pickedControlPoint.controlPointType == ControlPointType.northCeil) {
+                                t.ceilSlopeSE -= dragOffset.y * mod;
+                                t.ceilSlopeSW -= dragOffset.y * mod;
+                            }
+                            else {
+                                t.slopeSE -= dragOffset.y * mod;
+                                t.slopeSW -= dragOffset.y * mod;
+                            }
+                        }
+                        t.packHeights();
+                    }
+                    else if(pickedControlPoint.controlPointType == ControlPointType.southCeil || pickedControlPoint.controlPointType == ControlPointType.southFloor) {
 
-								float mod = ((float)y - (float)selY + 1) / (float)selHeight;
-								if(pickedControlPoint.controlPointType == ControlPointType.southCeil) {
-									t.ceilSlopeSE -= dragOffset.y * mod;
-									t.ceilSlopeSW -= dragOffset.y * mod;
-								}
-								else {
-									t.slopeSE -= dragOffset.y * mod;
-									t.slopeSW -= dragOffset.y * mod;
-								}
+                        float mod = ((float)info.y - (float)selY + 1) / (float)selHeight;
+                        if(pickedControlPoint.controlPointType == ControlPointType.southCeil) {
+                            t.ceilSlopeSE -= dragOffset.y * mod;
+                            t.ceilSlopeSW -= dragOffset.y * mod;
+                        }
+                        else {
+                            t.slopeSE -= dragOffset.y * mod;
+                            t.slopeSW -= dragOffset.y * mod;
+                        }
 
-								if(selHeight > 1) {
-									mod = ((float)y - (float)selY) / (float)selHeight;
-									if(pickedControlPoint.controlPointType == ControlPointType.southCeil) {
-										t.ceilSlopeNE -= dragOffset.y * mod;
-										t.ceilSlopeNW -= dragOffset.y * mod;
-									}
-									else {
-										t.slopeNE -= dragOffset.y * mod;
-										t.slopeNW -= dragOffset.y * mod;
-									}
-								}
-								t.packHeights();
-							}
-							else if(pickedControlPoint.controlPointType == ControlPointType.westCeil || pickedControlPoint.controlPointType == ControlPointType.westFloor) {
+                        if(selHeight > 1) {
+                            mod = ((float)info.y - (float)selY) / (float)selHeight;
+                            if(pickedControlPoint.controlPointType == ControlPointType.southCeil) {
+                                t.ceilSlopeNE -= dragOffset.y * mod;
+                                t.ceilSlopeNW -= dragOffset.y * mod;
+                            }
+                            else {
+                                t.slopeNE -= dragOffset.y * mod;
+                                t.slopeNW -= dragOffset.y * mod;
+                            }
+                        }
+                        t.packHeights();
+                    }
+                    else if(pickedControlPoint.controlPointType == ControlPointType.westCeil || pickedControlPoint.controlPointType == ControlPointType.westFloor) {
 
-								float mod = 1 - ((float)x - (float)selX) / (float)selWidth;
-								if(pickedControlPoint.controlPointType == ControlPointType.westCeil) {
-									t.ceilSlopeNE -= dragOffset.y * mod;
-									t.ceilSlopeSE -= dragOffset.y * mod;
-								}
-								else {
-									t.slopeNE -= dragOffset.y * mod;
-									t.slopeSE -= dragOffset.y * mod;
-								}
+                        float mod = 1 - ((float)info.x - (float)selX) / (float)selWidth;
+                        if(pickedControlPoint.controlPointType == ControlPointType.westCeil) {
+                            t.ceilSlopeNE -= dragOffset.y * mod;
+                            t.ceilSlopeSE -= dragOffset.y * mod;
+                        }
+                        else {
+                            t.slopeNE -= dragOffset.y * mod;
+                            t.slopeSE -= dragOffset.y * mod;
+                        }
 
-								if(selWidth > 1) {
-									mod = 1 - ((float)x - (float)selX + 1f) / (float)selWidth;
-									if(pickedControlPoint.controlPointType == ControlPointType.westCeil) {
-										t.ceilSlopeNW -= dragOffset.y * mod;
-										t.ceilSlopeSW -= dragOffset.y * mod;
-									}
-									else {
-										t.slopeNW -= dragOffset.y * mod;
-										t.slopeSW -= dragOffset.y * mod;
-									}
-								}
-								t.packHeights();
-							}
-							else if(pickedControlPoint.controlPointType == ControlPointType.eastCeil || pickedControlPoint.controlPointType == ControlPointType.eastFloor) {
+                        if(selWidth > 1) {
+                            mod = 1 - ((float)info.x - (float)selX + 1f) / (float)selWidth;
+                            if(pickedControlPoint.controlPointType == ControlPointType.westCeil) {
+                                t.ceilSlopeNW -= dragOffset.y * mod;
+                                t.ceilSlopeSW -= dragOffset.y * mod;
+                            }
+                            else {
+                                t.slopeNW -= dragOffset.y * mod;
+                                t.slopeSW -= dragOffset.y * mod;
+                            }
+                        }
+                        t.packHeights();
+                    }
+                    else if(pickedControlPoint.controlPointType == ControlPointType.eastCeil || pickedControlPoint.controlPointType == ControlPointType.eastFloor) {
 
-								float mod = ((float)x - (float)selX + 1) / (float)selWidth;
-								if(pickedControlPoint.controlPointType == ControlPointType.eastCeil) {
-									t.ceilSlopeNW -= dragOffset.y * mod;
-									t.ceilSlopeSW -= dragOffset.y * mod;
-								}
-								else {
-									t.slopeNW -= dragOffset.y * mod;
-									t.slopeSW -= dragOffset.y * mod;
-								}
+                        float mod = ((float)info.x - (float)selX + 1) / (float)selWidth;
+                        if(pickedControlPoint.controlPointType == ControlPointType.eastCeil) {
+                            t.ceilSlopeNW -= dragOffset.y * mod;
+                            t.ceilSlopeSW -= dragOffset.y * mod;
+                        }
+                        else {
+                            t.slopeNW -= dragOffset.y * mod;
+                            t.slopeSW -= dragOffset.y * mod;
+                        }
 
-								if(selWidth > 1) {
-									mod = ((float)x - (float)selX) / (float)selWidth;
-									if(pickedControlPoint.controlPointType == ControlPointType.eastCeil) {
-										t.ceilSlopeNE -= dragOffset.y * mod;
-										t.ceilSlopeSE -= dragOffset.y * mod;
-									}
-									else {
-										t.slopeNE -= dragOffset.y * mod;
-										t.slopeSE -= dragOffset.y * mod;
-									}
-								}
-								t.packHeights();
-							}
-						}
-					}
+                        if(selWidth > 1) {
+                            mod = ((float)info.x - (float)selX) / (float)selWidth;
+                            if(pickedControlPoint.controlPointType == ControlPointType.eastCeil) {
+                                t.ceilSlopeNE -= dragOffset.y * mod;
+                                t.ceilSlopeSE -= dragOffset.y * mod;
+                            }
+                            else {
+                                t.slopeNE -= dragOffset.y * mod;
+                                t.slopeSE -= dragOffset.y * mod;
+                            }
+                        }
+                        t.packHeights();
+                    }
 				}
 
 				if(pickedControlPoint.controlPointType == ControlPointType.vertex) {
@@ -1262,26 +1222,26 @@ public class EditorFrame implements ApplicationListener {
 		}
 		else {
 			// Drag entities around
-			if(movingEntity == true && pickedEntity != null) {
+			if(movingEntity && Editor.selection.picked != null) {
 				if(dragPlane == null) {
 
 					if(Gdx.input.isKeyPressed(Input.Keys.ALT_LEFT)) {
 						// Make a copy
-						Entity copy = Game.fromJson(pickedEntity.getClass(), Game.toJson(pickedEntity));
+						Entity copy = Game.fromJson(Editor.selection.picked.getClass(), Game.toJson(Editor.selection.picked));
 						level.entities.add(copy);
 
                         pickEntity(copy);
 
 						Array<Entity> copies = new Array<Entity>();
-						for(Entity selected : additionalSelected) {
+						for(Entity selected : Editor.selection.selected) {
 							Entity newCopy = Game.fromJson(selected.getClass(), Game.toJson(selected));
 							level.entities.add(newCopy);
 							copies.add(newCopy);
 						}
 
-						additionalSelected.clear();
-						additionalSelected.addAll(copies);
-                        editorUi.showEntityPropertiesMenu(this);
+						Editor.selection.selected.clear();
+						Editor.selection.selected.addAll(copies);
+                        ui.showEntityPropertiesMenu(true);
 					}
 
 					if(dragMode == DragMode.Y) {
@@ -1290,7 +1250,7 @@ public class EditorFrame implements ApplicationListener {
 						t_dragPlane.set(vertDir.x, vertDir.y, vertDir.z, 0f);
 						Plane vert = t_dragPlane;
 
-						float len = vert.distance(t_dragVector2.set(pickedEntity.x, pickedEntity.z, pickedEntity.y));
+						float len = vert.distance(t_dragVector2.set(Editor.selection.picked.x, Editor.selection.picked.z, Editor.selection.picked.y));
 						t_dragPlane.set(vertDir.x, vertDir.y, vertDir.z, -len);
 						dragPlane = t_dragPlane;
 					}
@@ -1301,7 +1261,7 @@ public class EditorFrame implements ApplicationListener {
 						t_dragPlane.set(vertDir.x, vertDir.y, vertDir.z, 0);
 						Plane vert = t_dragPlane;
 
-						float len = vert.distance(t_dragVector2.set(pickedEntity.x, pickedEntity.z, pickedEntity.y));
+						float len = vert.distance(t_dragVector2.set(Editor.selection.picked.x, Editor.selection.picked.z, Editor.selection.picked.y));
 						t_dragPlane.set(vertDir.x, vertDir.y, vertDir.z, -len);
 						dragPlane = t_dragPlane;
 					}
@@ -1311,7 +1271,7 @@ public class EditorFrame implements ApplicationListener {
 						t_dragPlane.set(vertDir.x, vertDir.y, vertDir.z, 0);
 						Plane vert = t_dragPlane;
 
-						float len = vert.distance(t_dragVector2.set(pickedEntity.x, pickedEntity.z, pickedEntity.y));
+						float len = vert.distance(t_dragVector2.set(Editor.selection.picked.x, Editor.selection.picked.z, Editor.selection.picked.y));
 						t_dragPlane.set(vertDir.x, vertDir.y, vertDir.z, -len);
 						dragPlane = t_dragPlane;
 					}
@@ -1321,7 +1281,7 @@ public class EditorFrame implements ApplicationListener {
 						t_dragPlane.set(vertDir.x, vertDir.y, vertDir.z, 0);
 						Plane vert = t_dragPlane;
 
-						float len = vert.distance(t_dragVector2.set(pickedEntity.x, pickedEntity.z - 0.5f, pickedEntity.y));
+						float len = vert.distance(t_dragVector2.set(Editor.selection.picked.x, Editor.selection.picked.z - 0.5f, Editor.selection.picked.y));
 						t_dragPlane.set(vertDir.x, vertDir.y, vertDir.z, -len);
 
 						dragPlane = t_dragPlane;
@@ -1333,61 +1293,61 @@ public class EditorFrame implements ApplicationListener {
 						t_dragPlane.set(vertDir.x, vertDir.y, vertDir.z, 0);
 						Plane vert = t_dragPlane;
 
-						float len = vert.distance(t_dragVector2.set(pickedEntity.x, pickedEntity.z, pickedEntity.y));
+						float len = vert.distance(t_dragVector2.set(Editor.selection.picked.x, Editor.selection.picked.z, Editor.selection.picked.y));
 						t_dragPlane.set(vertDir.x, vertDir.y, vertDir.z, -len);
 						dragPlane = t_dragPlane;
 					}
 				}
 
 				if(dragStart == null)
-					dragStart = new Vector3(pickedEntity.x, pickedEntity.y, pickedEntity.z);
+					dragStart = new Vector3(Editor.selection.picked.x, Editor.selection.picked.y, Editor.selection.picked.z);
 
 				if(moveMode == MoveMode.DRAG && Intersector.intersectRayPlane(camera.getPickRay(Gdx.input.getX(), Gdx.input.getY()), dragPlane, intpos)) {
 					if(dragOffset == null) {
-						dragOffset = t_dragOffset.set(pickedEntity.x - intpos.x, pickedEntity.y - intpos.z, pickedEntity.z - intpos.y);
+						dragOffset = t_dragOffset.set(Editor.selection.picked.x - intpos.x, Editor.selection.picked.y - intpos.z, Editor.selection.picked.z - intpos.y);
 					}
 
-					float startX = pickedEntity.x;
-					float startY = pickedEntity.y;
-					float startZ = pickedEntity.z;
+					float startX = Editor.selection.picked.x;
+					float startY = Editor.selection.picked.y;
+					float startZ = Editor.selection.picked.z;
 
-					pickedEntity.x = intpos.x + dragOffset.x;
-					pickedEntity.y = intpos.z + dragOffset.y;
-					pickedEntity.z = intpos.y + dragOffset.z;
+					Editor.selection.picked.x = intpos.x + dragOffset.x;
+					Editor.selection.picked.y = intpos.z + dragOffset.y;
+					Editor.selection.picked.z = intpos.y + dragOffset.z;
 
 					if(dragMode == DragMode.XY) {
-						pickedEntity.z = dragStart.z;
+						Editor.selection.picked.z = dragStart.z;
 					}
 					if(dragMode == DragMode.Y) {
-						pickedEntity.z = dragStart.z;
-						pickedEntity.y = dragStart.y;
+						Editor.selection.picked.z = dragStart.z;
+						Editor.selection.picked.y = dragStart.y;
 					}
 					else if(dragMode == DragMode.Z) {
-						pickedEntity.x = dragStart.x;
-						pickedEntity.y = dragStart.y;
+						Editor.selection.picked.x = dragStart.x;
+						Editor.selection.picked.y = dragStart.y;
 					}
 					else if(dragMode == DragMode.X) {
-						pickedEntity.x = dragStart.x;
+						Editor.selection.picked.x = dragStart.x;
 					}
 
 					if(Gdx.input.isKeyPressed(Keys.CONTROL_LEFT)) {
-						pickedEntity.x = (int)(pickedEntity.x * 8) / 8f;
-						pickedEntity.y = (int)(pickedEntity.y * 8) / 8f;
-						pickedEntity.z = (int)(pickedEntity.z * 8) / 8f;
+						Editor.selection.picked.x = (int)(Editor.selection.picked.x * 8) / 8f;
+						Editor.selection.picked.y = (int)(Editor.selection.picked.y * 8) / 8f;
+						Editor.selection.picked.z = (int)(Editor.selection.picked.z * 8) / 8f;
 					}
 
-					float movedX = startX - pickedEntity.x;
-					float movedY = startY - pickedEntity.y;
-					float movedZ = startZ - pickedEntity.z;
+					float movedX = startX - Editor.selection.picked.x;
+					float movedY = startY - Editor.selection.picked.y;
+					float movedZ = startZ - Editor.selection.picked.z;
 
-					for(Entity selected : additionalSelected) {
+					for(Entity selected : Editor.selection.selected) {
 						selected.x -= movedX;
 						selected.y -= movedY;
 						selected.z -= movedZ;
 					}
 
-                    refreshEntity(pickedEntity);
-                    for(Entity selected : additionalSelected) {
+                    refreshEntity(Editor.selection.picked);
+                    for(Entity selected : Editor.selection.selected) {
                         refreshEntity(selected);
                     }
 				}
@@ -1398,7 +1358,7 @@ public class EditorFrame implements ApplicationListener {
 				dragPlane = null;
 			}
 
-			if(pickedEntity == null) {
+			if(Editor.selection.picked == null) {
 				dragPlane = null;
 				dragMode = DragMode.NONE;
 				moveMode = MoveMode.DRAG;
@@ -1407,56 +1367,56 @@ public class EditorFrame implements ApplicationListener {
 			// Draw rotation circles
 			if(moveMode == MoveMode.ROTATE) {
 				if(dragMode == DragMode.X) {
-					drawXCircle(pickedEntity.x, pickedEntity.z - 0.49f, pickedEntity.y, 2f, Color.GREEN);
+					drawXCircle(Editor.selection.picked.x, Editor.selection.picked.z - 0.49f, Editor.selection.picked.y, 2f, EditorColors.X_AXIS);
 				}
 				else if(dragMode == DragMode.Y) {
-					drawYCircle(pickedEntity.x, pickedEntity.z - 0.49f, pickedEntity.y, 2f, Color.RED);
+					drawYCircle(Editor.selection.picked.x, Editor.selection.picked.z - 0.49f, Editor.selection.picked.y, 2f, EditorColors.Y_AXIS);
 				}
 				else {
-					drawZCircle(pickedEntity.x, pickedEntity.z - 0.49f, pickedEntity.y, 2f, Color.BLUE);
+					drawZCircle(Editor.selection.picked.x, Editor.selection.picked.z - 0.49f, Editor.selection.picked.y, 2f, EditorColors.Z_AXIS);
 				}
 
-				if(pickedEntity instanceof Directional) {
-					Directional dirEntity = (Directional)pickedEntity;
+				if(Editor.selection.picked instanceof Directional) {
+					Directional dirEntity = (Directional) Editor.selection.picked;
 
 					Vector3 dirEnd = dirEntity.getDirection();
-					dirEnd.x += pickedEntity.x;
-					dirEnd.y += pickedEntity.y;
-					dirEnd.z += pickedEntity.z;
+					dirEnd.x += Editor.selection.picked.x;
+					dirEnd.y += Editor.selection.picked.y;
+					dirEnd.z += Editor.selection.picked.z;
 
-					drawLine(new Vector3(pickedEntity.x, pickedEntity.z - 0.49f, pickedEntity.y), new Vector3(dirEnd.x, dirEnd.z - 0.49f,dirEnd.y), 2f, Color.WHITE);
+					drawLine(new Vector3(Editor.selection.picked.x, Editor.selection.picked.z - 0.49f, Editor.selection.picked.y), new Vector3(dirEnd.x, dirEnd.z - 0.49f,dirEnd.y), 2f, Color.WHITE);
 				}
 			}
 
-			if(pickedEntity != null && ((hoveredEntity == null || additionalSelected.contains(hoveredEntity, true)) || hoveredEntity == pickedEntity || movingEntity)) {
+			if(Editor.selection.picked != null && ((Editor.selection.hovered == null || Editor.selection.isSelected(Editor.selection.hovered)) || Editor.selection.hovered == Editor.selection.picked || movingEntity)) {
 				Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
 				Gdx.gl.glEnable(GL20.GL_ALPHA);
 				Gdx.gl.glEnable(GL20.GL_BLEND);
 
 				if(moveMode == MoveMode.DRAG) {
 					if(dragMode == DragMode.Z) {
-						Vector3 startLine = tempVec3.set(pickedEntity.x, pickedEntity.z - 10f, pickedEntity.y);
-						Vector3 endLine = tempVec4.set(pickedEntity.x, pickedEntity.z + 10f, pickedEntity.y);
-						this.drawLine(startLine, endLine, 2, Color.BLUE);
+						Vector3 startLine = tempVec3.set(Editor.selection.picked.x, Editor.selection.picked.z - 10f, Editor.selection.picked.y);
+						Vector3 endLine = tempVec4.set(Editor.selection.picked.x, Editor.selection.picked.z + 10f, Editor.selection.picked.y);
+						this.drawLine(startLine, endLine, 2, EditorColors.Z_AXIS);
 					}
 					else if(dragMode == DragMode.X) {
-						Vector3 startLine = tempVec3.set(pickedEntity.x, pickedEntity.z - 0.5f, pickedEntity.y - 10f);
-						Vector3 endLine = tempVec4.set(pickedEntity.x, pickedEntity.z - 0.5f, pickedEntity.y + 10f);
-						this.drawLine(startLine, endLine, 2, Color.GREEN);
+						Vector3 startLine = tempVec3.set(Editor.selection.picked.x, Editor.selection.picked.z - 0.5f, Editor.selection.picked.y - 10f);
+						Vector3 endLine = tempVec4.set(Editor.selection.picked.x, Editor.selection.picked.z - 0.5f, Editor.selection.picked.y + 10f);
+						this.drawLine(startLine, endLine, 2, EditorColors.X_AXIS);
 					}
 					else if(dragMode == DragMode.Y) {
-						Vector3 startLine = tempVec3.set(pickedEntity.x - 10f, pickedEntity.z - 0.5f, pickedEntity.y);
-						Vector3 endLine = tempVec4.set(pickedEntity.x + 10f, pickedEntity.z - 0.5f, pickedEntity.y);
-						this.drawLine(startLine, endLine, 2, Color.RED);
+						Vector3 startLine = tempVec3.set(Editor.selection.picked.x - 10f, Editor.selection.picked.z - 0.5f, Editor.selection.picked.y);
+						Vector3 endLine = tempVec4.set(Editor.selection.picked.x + 10f, Editor.selection.picked.z - 0.5f, Editor.selection.picked.y);
+						this.drawLine(startLine, endLine, 2, EditorColors.Y_AXIS);
 					}
 					else if(dragMode == DragMode.XY || (!movingEntity && Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT))) {
-						Vector3 startLine = tempVec3.set(pickedEntity.x, pickedEntity.z - 0.5f, pickedEntity.y - 10f);
-						Vector3 endLine = tempVec4.set(pickedEntity.x, pickedEntity.z - 0.5f, pickedEntity.y + 10f);
-						this.drawLine(startLine, endLine, 2, Color.GREEN);
+						Vector3 startLine = tempVec3.set(Editor.selection.picked.x, Editor.selection.picked.z - 0.5f, Editor.selection.picked.y - 10f);
+						Vector3 endLine = tempVec4.set(Editor.selection.picked.x, Editor.selection.picked.z - 0.5f, Editor.selection.picked.y + 10f);
+						this.drawLine(startLine, endLine, 2, EditorColors.X_AXIS);
 
-						startLine = tempVec3.set(pickedEntity.x - 10f, pickedEntity.z - 0.5f, pickedEntity.y);
-						endLine = tempVec4.set(pickedEntity.x + 10f, pickedEntity.z - 0.5f, pickedEntity.y);
-						this.drawLine(startLine, endLine, 2, Color.RED);
+						startLine = tempVec3.set(Editor.selection.picked.x - 10f, Editor.selection.picked.z - 0.5f, Editor.selection.picked.y);
+						endLine = tempVec4.set(Editor.selection.picked.x + 10f, Editor.selection.picked.z - 0.5f, Editor.selection.picked.y);
+						this.drawLine(startLine, endLine, 2, EditorColors.Y_AXIS);
 					}
 				}
 			}
@@ -1502,14 +1462,46 @@ public class EditorFrame implements ApplicationListener {
 
 		if(player == null) {
 			lineRenderer.begin(ShapeType.Line);
-			drawLine(xGridStart, xGridEnd, 2f, colorDarkRed);
-			drawLine(yGridStart, yGridEnd, 2f, colorDarkGreen);
+			drawLine(xGridStart, xGridEnd, 2f, EditorColors.Y_AXIS_DARK);
+			drawLine(yGridStart, yGridEnd, 2f, EditorColors.X_AXIS_DARK);
 			lineRenderer.end();
 		}
 
 		Gdx.gl.glDisable(GL20.GL_BLEND);
-		renderCollisionBoxes();
 		renderTriggerLines();
+
+		if (showGizmos) {
+			drawAllGizmos();
+		}
+		else {
+			drawPickedGizmos();
+		}
+	}
+
+	/** Draw Gizmos for the picked Entity and selected Entities. */
+	private void drawPickedGizmos() {
+		drawGizmo(Editor.selection.picked);
+
+		for (Entity selected : Editor.selection.selected) {
+			drawGizmo(selected);
+		}
+	}
+
+	/** Draw Gizmos for all Entities in the level. */
+	private void drawAllGizmos() {
+		for (Entity entity : level.entities) {
+			drawGizmo(entity);
+		}
+	}
+
+	/** Draw Gizmo for the given entity. */
+	private void drawGizmo(Entity entity) {
+		if (entity == null) {
+			return;
+		}
+
+		Gizmo gizmo = GizmoProvider.getGizmo(entity.getClass());
+		gizmo.draw(entity);
 	}
 
 	private void GlPickEntity() {
@@ -1534,7 +1526,7 @@ public class EditorFrame implements ApplicationListener {
 				int b = (int)(pickedPixelBufferColor.b * 255);
 				int index = (r & 0xff) << 16 | (g & 0xff) << 8 | (b & 0xff);
 
-				hoveredEntity = renderer.entitiesForPicking.get(index);
+				Editor.selection.hovered = renderer.entitiesForPicking.get(index);
 				//Gdx.app.log("Picking", pickedPixelBufferColor.toString());
 			}
 			catch (Exception ex) {
@@ -1565,29 +1557,8 @@ public class EditorFrame implements ApplicationListener {
 		Gdx.gl.glCullFace(GL20.GL_BACK);
 		Gdx.gl.glEnable(GL20.GL_CULL_FACE);
 
-		Tesselate();
-
-		// render world, keep depth buffer
-		tesselators.world.render();
-
-		GlRenderer.waterShaderInfo.setScrollSpeed(0f);
-		tesselators.water.render();
-
-		GlRenderer.waterShaderInfo.setScrollSpeed(0.03f);
-		tesselators.waterfall.render();
-
-		GlRenderer.waterEdgeShaderInfo.setAttribute("u_noise_mod", 1f);
-		GlRenderer.waterEdgeShaderInfo.setAttribute("u_waveMod", 1f);
-
-		Gdx.gl.glEnable(GL20.GL_POLYGON_OFFSET_FILL);
-		Gdx.gl.glPolygonOffset(-1f, -1f);
-
-		tesselators.waterEdges.render();
-
-		GlRenderer.waterEdgeShaderInfo.setAttribute("u_noise_mod", 4f);
-		GlRenderer.waterEdgeShaderInfo.setAttribute("u_waveMod", 0f);
-
-		tesselators.waterfallEdges.render();
+		renderer.Tesselate(level);
+		renderer.renderWorld(level);
 
 		Gdx.gl.glDisable(GL20.GL_POLYGON_OFFSET_FILL);
 		Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
@@ -1600,28 +1571,24 @@ public class EditorFrame implements ApplicationListener {
 	}
 
 	private void refreshTriangleSpatialHash() {
-		GlRenderer.triangleSpatialHash = triangleSpatialHash;
-		triangleSpatialHash.Flush();
-
-		// add the collision triangles to the spatial hash
-		for(int i = 0; i < staticMeshCollisionTriangles.size; i++) {
-			triangleSpatialHash.AddTriangle(staticMeshCollisionTriangles.get(i));
-		}
-
-		tesselators.world.addCollisionTriangles(triangleSpatialHash);
-		tesselators.water.addCollisionTriangles(triangleSpatialHash);
-		tesselators.waterfall.addCollisionTriangles(triangleSpatialHash);
+		GlRenderer.triangleSpatialHash.Flush();
 	}
 
-	private void refreshEntity(Entity theEntity) {
+	protected void refreshEntity(Entity theEntity) {
 		if(theEntity instanceof Light && showLights) {
-			refreshLights();
+			markWorldAsDirty((int)theEntity.x, (int)theEntity.y, (int)((Light)theEntity).range + 1);
+			((Light)theEntity).clearCanSee();
+			lightsDirty = true;
 		}
 		else if(theEntity instanceof ProjectedDecal) {
 			((ProjectedDecal)theEntity).refresh();
 		}
 		else if(theEntity instanceof Model) {
-			if(!((Model)theEntity).isDynamic) staticMeshBatch = null;
+			Model m = (Model)theEntity;
+			if(!m.isDynamic) {
+				// Todo: Get range from the bounding box
+				markWorldAsDirty((int)theEntity.x, (int)theEntity.y, 5);
+			}
 		}
 		else if(theEntity instanceof Prefab) {
 			Array<Entity> contains = ((Prefab)theEntity).entities;
@@ -1678,30 +1645,6 @@ public class EditorFrame implements ApplicationListener {
 				}
 			}
 		}
-	}
-
-	public void renderCollisionBoxes() {
-		lineRenderer.begin(ShapeType.Line);
-
-		if(showCollisionBoxes) {
-			for(Entity e : level.entities) {
-				if(e.isSolid || e instanceof Area) {
-					renderCollisionBox(e);
-				}
-			}
-		} else {
-			if(pickedEntity != null) renderCollisionBox(pickedEntity);
-			for(Entity selected : additionalSelected) {
-				renderCollisionBox(selected);
-			}
-		}
-
-		Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
-		Gdx.gl.glLineWidth(1f);
-		lineRenderer.setColor(Color.WHITE);
-		lineRenderer.end();
-		Gdx.gl.glLineWidth(1f);
-		Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
 	}
 
 	public void renderCollisionBox(Entity e) {
@@ -1805,7 +1748,7 @@ public class EditorFrame implements ApplicationListener {
 			Trigger t = (Trigger)e;
 			Array<Entity> matches = level.getEntitiesById(t.triggersId);
 			if(matches.size > 0) {
-				if(e == pickedEntity)
+				if(e == Editor.selection.picked)
 					lineRenderer.setColor(Color.WHITE);
 				else
 					lineRenderer.setColor(Color.MAGENTA);
@@ -1819,7 +1762,7 @@ public class EditorFrame implements ApplicationListener {
 			BasicTrigger t = (BasicTrigger)e;
 			Array<Entity> matches = level.getEntitiesById(t.triggersId);
 			if(matches.size > 0) {
-				if(e == pickedEntity)
+				if(e == Editor.selection.picked)
 					lineRenderer.setColor(Color.WHITE);
 				else
 					lineRenderer.setColor(Color.MAGENTA);
@@ -1834,7 +1777,7 @@ public class EditorFrame implements ApplicationListener {
 			ButtonModel t = (ButtonModel)e;
 			Array<Entity> matches = level.getEntitiesById(t.triggersId);
 			if(matches.size > 0) {
-				if(e == pickedEntity)
+				if(e == Editor.selection.picked)
 					lineRenderer.setColor(Color.WHITE);
 				else
 					lineRenderer.setColor(Color.MAGENTA);
@@ -1847,66 +1790,50 @@ public class EditorFrame implements ApplicationListener {
 	}
 
 	private void drawSlopeLines(int num, boolean edge) {
-
 		if(!selected) return;
 
-		int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
+        for (TileSelectionInfo info : Editor.selection.tiles) {
+            Tile t = info.tile;
+            int x = info.x;
+            int y = info.y;
 
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
-		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
-
-		for(int x = selX; x < selX + selWidth; x++) {
-			for(int y = selY; y < selY + selHeight; y++) {
-				Tile t = level.getTileOrNull(x,y);
-				if(t != null) {
-					if(edge) {
-						if(num == 0)
-							drawLine(tempVec1.set(x, t.getNEFloorHeight(), y), tempVec2.set(x + 1, t.getNWFloorHeight(), y), 4f, Color.WHITE);
-						else if(num == 1)
-							drawLine(tempVec1.set(x, t.getNEFloorHeight(), y), tempVec2.set(x, t.getSEFloorHeight(), y + 1), 4f, Color.WHITE);
-						else if(num == 2)
-							drawLine(tempVec1.set(x, t.getSEFloorHeight(), y + 1), tempVec2.set(x + 1, t.getSWFloorHeight(), y + 1), 4f, Color.WHITE);
-						else if(num == 3)
-							drawLine(tempVec1.set(x + 1, t.getSWFloorHeight(), y + 1), tempVec2.set(x + 1, t.getNWFloorHeight(), y), 4f, Color.WHITE);
-						else if(num == 4)
-							drawLine(tempVec1.set(x, t.getNECeilHeight(), y), tempVec2.set(x + 1, t.getNWCeilHeight(), y), 4f, Color.WHITE);
-						else if(num == 5)
-							drawLine(tempVec1.set(x, t.getNECeilHeight(), y), tempVec2.set(x, t.getSECeilHeight(), y + 1), 4f, Color.WHITE);
-						else if(num == 6)
-							drawLine(tempVec1.set(x, t.getSECeilHeight(), y + 1), tempVec2.set(x + 1, t.getSWCeilHeight(), y + 1), 4f, Color.WHITE);
-						else
-							drawLine(tempVec1.set(x + 1, t.getSWCeilHeight(), y + 1), tempVec2.set(x + 1, t.getNWCeilHeight(), y), 4f, Color.WHITE);
-					}
-					else {
-						if(num == 1)
-							drawPoint(tempVec1.set(x, t.getNEFloorHeight(), y), 6f, Color.WHITE);
-						else if(num == 0)
-							drawPoint(tempVec1.set(x + 1, t.getNWFloorHeight(), y), 6f, Color.WHITE);
-						else if(num == 2)
-							drawPoint(tempVec1.set(x, t.getSEFloorHeight(), y + 1), 6f, Color.WHITE);
-						else if(num == 3)
-							drawPoint(tempVec1.set(x + 1, t.getSWFloorHeight(), y + 1), 6f, Color.WHITE);
-						else if(num == 4)
-							drawPoint(tempVec1.set(x + 1, t.getNECeilHeight(), y), 6f, Color.WHITE);
-						else if(num == 5)
-							drawPoint(tempVec1.set(x, t.getNWCeilHeight(), y), 6f, Color.WHITE);
-						else if(num == 6)
-							drawPoint(tempVec1.set(x, t.getSECeilHeight(), y + 1), 6f, Color.WHITE);
-						else
-							drawPoint(tempVec1.set(x + 1, t.getSWCeilHeight(), y + 1), 6f, Color.WHITE);
-					}
-				}
+            if (t != null) {
+                if(edge) {
+                    if(num == 0)
+                        drawLine(tempVec1.set(x, t.getNEFloorHeight(), y), tempVec2.set(x + 1, t.getNWFloorHeight(), y), 4f, Color.WHITE);
+                    else if(num == 1)
+                        drawLine(tempVec1.set(x, t.getNEFloorHeight(), y), tempVec2.set(x, t.getSEFloorHeight(), y + 1), 4f, Color.WHITE);
+                    else if(num == 2)
+                        drawLine(tempVec1.set(x, t.getSEFloorHeight(), y + 1), tempVec2.set(x + 1, t.getSWFloorHeight(), y + 1), 4f, Color.WHITE);
+                    else if(num == 3)
+                        drawLine(tempVec1.set(x + 1, t.getSWFloorHeight(), y + 1), tempVec2.set(x + 1, t.getNWFloorHeight(), y), 4f, Color.WHITE);
+                    else if(num == 4)
+                        drawLine(tempVec1.set(x, t.getNECeilHeight(), y), tempVec2.set(x + 1, t.getNWCeilHeight(), y), 4f, Color.WHITE);
+                    else if(num == 5)
+                        drawLine(tempVec1.set(x, t.getNECeilHeight(), y), tempVec2.set(x, t.getSECeilHeight(), y + 1), 4f, Color.WHITE);
+                    else if(num == 6)
+                        drawLine(tempVec1.set(x, t.getSECeilHeight(), y + 1), tempVec2.set(x + 1, t.getSWCeilHeight(), y + 1), 4f, Color.WHITE);
+                    else
+                        drawLine(tempVec1.set(x + 1, t.getSWCeilHeight(), y + 1), tempVec2.set(x + 1, t.getNWCeilHeight(), y), 4f, Color.WHITE);
+                }
+                else {
+                    if(num == 1)
+                        drawPoint(tempVec1.set(x, t.getNEFloorHeight(), y), 6f, Color.WHITE);
+                    else if(num == 0)
+                        drawPoint(tempVec1.set(x + 1, t.getNWFloorHeight(), y), 6f, Color.WHITE);
+                    else if(num == 2)
+                        drawPoint(tempVec1.set(x, t.getSEFloorHeight(), y + 1), 6f, Color.WHITE);
+                    else if(num == 3)
+                        drawPoint(tempVec1.set(x + 1, t.getSWFloorHeight(), y + 1), 6f, Color.WHITE);
+                    else if(num == 4)
+                        drawPoint(tempVec1.set(x + 1, t.getNECeilHeight(), y), 6f, Color.WHITE);
+                    else if(num == 5)
+                        drawPoint(tempVec1.set(x, t.getNWCeilHeight(), y), 6f, Color.WHITE);
+                    else if(num == 6)
+                        drawPoint(tempVec1.set(x, t.getSECeilHeight(), y + 1), 6f, Color.WHITE);
+                    else
+                        drawPoint(tempVec1.set(x + 1, t.getSWCeilHeight(), y + 1), 6f, Color.WHITE);
+                }
 			}
 		}
 	}
@@ -1942,7 +1869,7 @@ public class EditorFrame implements ApplicationListener {
 	public void resize(int width, int height) {
 
 		if(gameApp != null) gameApp.resize(width, height);
-        if(editorUi != null) editorUi.resize(width, height);
+        if(ui != null) ui.resize(width, height);
 
 		Gdx.gl.glViewport(0, 0, width, height);
 
@@ -1984,74 +1911,10 @@ public class EditorFrame implements ApplicationListener {
 
 	@Override
 	public void create() {
-
-		renderer = new GlRenderer();
-
-        EditorArt.initAtlases();
 		init();
-
-		Gdx.input.setCursorCatched(false);
-
-		initTextures();
-
-        pickedWallTextureAtlas = pickedWallBottomTextureAtlas = pickedFloorTextureAtlas = pickedCeilingTextureAtlas =
-                TextureAtlas.cachedRepeatingAtlases.firstKey();
-
-		level = new Level(17,17);
-		Tile t = new Tile();
-		t.floorHeight = -0.5f;
-		t.ceilHeight = 0.5f;
-		level.setTile(7, 7, t);
-
-		gridMesh = genGrid(level.width,level.height);
 	}
 
-	public void save(String filename) {
-
-		level.preSaveCleanup();
-
-		// cleanup some of the tiles
-		for(int x = 0; x < level.width; x++) {
-			for(int y = 0; y < level.height; y++) {
-				Tile cTile = level.getTileOrNull(x, y);
-				if(cTile == null) {
-
-					// if any tiles around are not solid, make this a real tile
-					boolean makeRealTile = false;
-					for(int xx = x - 1; xx <= x + 1; xx += 2) {
-						for(int yy = y - 1; yy <= y + 1; yy += 2) {
-							Tile tile = level.getTile(xx, yy);
-							if(!tile.renderSolid) makeRealTile = true;
-						}
-					}
-
-					if(makeRealTile) {
-						Tile t = new Tile();
-						t.renderSolid = true;
-						t.blockMotion = true;
-						level.setTile(x, y, t);
-					}
-				}
-				else {
-					if(cTile.wallTex == 6 && !(cTile instanceof ExitTile) && cTile.IsSolid()) {
-						ExitTile exitTile = new ExitTile();
-						Tile.copy(cTile, exitTile);
-						level.setTile(x,  y, exitTile);
-					}
-				}
-			}
-		}
-
-		// write as json
-		if(filename.endsWith(".dat")) {
-			Game.toJson(level, Gdx.files.absolute(filename));
-		}
-		else {
-			KryoSerializer.saveLevel(Gdx.files.absolute(filename), level);
-		}
-	}
-
-    public boolean isSelected() {
+	public boolean isSelected() {
         return selected;
     }
 
@@ -2070,13 +1933,11 @@ public class EditorFrame implements ApplicationListener {
 				rightClickWasDown = false;
 		}
 
-		if(editorUi.isShowingMenuOrModal())
+		if(ui.isShowingMenuOrModal())
 			return;
 
 		// get picked entity
 		Ray ray = camera.getPickRay(Gdx.input.getX(), Gdx.input.getY());
-
-		float worldHitDistance = 10000000f;
 
 		// get plane intersection
 		if(intpos != null) {
@@ -2089,10 +1950,9 @@ public class EditorFrame implements ApplicationListener {
 
 		// try world intersection
 		Intersector.intersectRayPlane(ray, p, intpos);
-		if (Collidor.intersectRayForwardFacingTriangles(camera.getPickRay(Gdx.input.getX(), Gdx.input.getY()), camera, triangleSpatialHash.getAllTriangles(), intpos, intersectNormal)) {
+		if (Collidor.intersectRayForwardFacingTriangles(camera.getPickRay(Gdx.input.getX(), Gdx.input.getY()), camera, GlRenderer.triangleSpatialHash.getAllTriangles(), intpos, intersectNormal)) {
 			intersectTemp.set(intpos).sub(camera.position).nor();
 			intpos.add(intersectTemp.x * -0.05f, 0.0001f, intersectTemp.z * -0.05f);
-			worldHitDistance = intersectTemp.set(intpos).sub(camera.position).len();
 		}
 
 		if(tileDragging) {
@@ -2100,8 +1960,7 @@ public class EditorFrame implements ApplicationListener {
 		}
 
 		if(Gdx.input.isKeyJustPressed(Keys.TAB)) {
-			pickedEntity = null;
-			hoveredEntity = null;
+			Editor.selection.clear();
 		}
 
 		// Try to pick an entity
@@ -2118,20 +1977,20 @@ public class EditorFrame implements ApplicationListener {
 			if(movingControlPoint || pickedControlPoint != null) {
 				// don't select entities
 			}
-			else if(hoveredEntity == null && pickedEntity == null) {
+			else if(Editor.selection.hovered == null && Editor.selection.picked == null) {
 				selected = true;
 			}
 			else {
 				if(!readLeftClick) {
-					if(pickedEntity != null && hoveredEntity != null && hoveredEntity != pickedEntity && !additionalSelected.contains(hoveredEntity, true) && (Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT) || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT))) {
-                        pickAdditionalEntity(hoveredEntity);
+					if(Editor.selection.picked != null && Editor.selection.hovered != null && Editor.selection.hovered != Editor.selection.picked && !Editor.selection.isSelected(Editor.selection.hovered) && (Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT) || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT))) {
+                        pickAdditionalEntity(Editor.selection.hovered);
 					}
-					else if(pickedEntity != null && pickedEntity == hoveredEntity || additionalSelected.contains(hoveredEntity, true)) {
+					else if(Editor.selection.picked != null && Editor.selection.picked == Editor.selection.hovered || Editor.selection.isSelected(Editor.selection.hovered)) {
 						movingEntity = true;
 					}
 					else {
 						clearEntitySelection();
-                        pickEntity(hoveredEntity);
+                        pickEntity(Editor.selection.hovered);
 					}
 				}
 			}
@@ -2144,94 +2003,10 @@ public class EditorFrame implements ApplicationListener {
 			movingEntity = false;
 			movingControlPoint = false;
 		}
-		if(pickedEntity == null) movingEntity = false;
-
-		boolean turnLeft = editorInput.isKeyPressed(Keys.LEFT) || (Gdx.input.getDeltaX() < 0 && Gdx.input.isButtonPressed(Buttons.MIDDLE));
-		boolean turnRight = editorInput.isKeyPressed(Keys.RIGHT) || (Gdx.input.getDeltaX() > 0 && Gdx.input.isButtonPressed(Buttons.MIDDLE));
-		boolean turnUp = editorInput.isKeyPressed(Keys.UP) || (Gdx.input.getDeltaY() > 0 && Gdx.input.isButtonPressed(Buttons.MIDDLE));
-		boolean turnDown = editorInput.isKeyPressed(Keys.DOWN) || (Gdx.input.getDeltaY() < 0 && Gdx.input.isButtonPressed(Buttons.MIDDLE));
-
-		if(turnLeft) {
-			rota += rotSpeed;
-			if(rota > maxRot) rota = maxRot;
-		}
-		else if(turnRight) {
-			rota -= rotSpeed;
-			if(rota < -maxRot) rota = -maxRot;
-		}
-
-		rotX += rota;
-		rota *= 0.8;
-
-		if(turnUp) {
-			rotya += rotSpeed * 0.6f;
-			if(rotya > maxRot) rotya = maxRot;
-		}
-		else if(turnDown) {
-			rotya -= rotSpeed * 0.6f;
-			if(rotya < -maxRot) rotya = -maxRot;
-		}
-
-		rotY += rotya;
-		
-		if (rotY < -rotYClamp) rotY = -rotYClamp;
-		if (rotY > rotYClamp) rotY = rotYClamp;
-
-		rotya *= 0.8;
-
-		float xm = 0f;
-		float zm = 0f;
-
-		if(editorInput.isKeyPressed(Keys.A)) {
-			xm = -1f;
-		}
-		if(editorInput.isKeyPressed(Keys.D)) {
-			xm = 1f;
-		}
-
-		if(editorInput.isKeyPressed(Keys.W)) {
-			zm = -1f;
-		}
-		if(editorInput.isKeyPressed(Keys.S)) {
-			zm = 1f;
-		}
-
-		if (editorInput.isKeyPressed(Keys.SHIFT_LEFT)) {
-			xm *= 2.0f;
-			zm *= 2.0f;
-		}
-
-		camZ += (zm * Math.sin(rotY)) * walkSpeed;
-		zm *= Math.cos(rotY);
-		camX += (xm * Math.cos(rotX) + zm * Math.sin(rotX)) * walkSpeed;
-		camY += (zm * Math.cos(rotX) - xm * Math.sin(rotX)) * walkSpeed;
-
-		if(player != null) {
-			player.rot = rotX;
-			player.yrot = rotY;
-
-			player.xa += (xm * Math.cos(rotX) + zm * Math.sin(rotX)) * 0.025f * Math.min(player.friction * 1.4f, 1f);
-			player.ya += (zm * Math.cos(rotX) - xm * Math.sin(rotX)) * 0.025f * Math.min(player.friction * 1.4f, 1f);
-		}
-
-		int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
-
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
-		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
+		if(Editor.selection.picked == null) movingEntity = false;
 
 		// Tile editing mode?
-		if(pickedEntity == null) {
+		if(Editor.selection.picked == null) {
 			if(Gdx.input.isKeyPressed(Keys.NUM_1)) {
 				paintSurfaceAtCursor();
 			}
@@ -2244,9 +2019,11 @@ public class EditorFrame implements ApplicationListener {
 			if(Gdx.input.isKeyPressed(Keys.T)) {
 				if(!readRotate) {
 					readRotate = true;
-					pickedEntity.rotate90();
-					for(Entity e : additionalSelected) { e.rotate90(); }
-					refreshEntity(pickedEntity);
+					Editor.selection.picked.rotate90();
+					for(Entity e : Editor.selection.selected) {
+						e.rotate90();
+					}
+					refreshEntity(Editor.selection.picked);
 				}
 			}
 			else readRotate = false;
@@ -2259,10 +2036,6 @@ public class EditorFrame implements ApplicationListener {
 		else {
 			level.editorTick(player, 0);
 		}
-
-		camera.position.x = camX;
-		camera.position.y = camZ;
-		camera.position.z = camY;
 
 		if(editorInput.isButtonPressed(Input.Buttons.LEFT)) {
 			readLeftClick = true;
@@ -2278,8 +2051,11 @@ public class EditorFrame implements ApplicationListener {
 			readRightClick = false;
 		}
 
+		// Tick subsystems.
 		input.tick();
         editorInput.tick();
+        cameraController.tick();
+        liveReload.tick();
 
 		CachePools.clearOnTick();
 	}
@@ -2293,8 +2069,8 @@ public class EditorFrame implements ApplicationListener {
 				controlPoints.clear();
 
 				selected = false;
-				pickedEntity = null;
-				additionalSelected.clear();
+				Editor.selection.picked = null;
+				Editor.selection.selected.clear();
 
 				refresh();
 			}
@@ -2311,8 +2087,8 @@ public class EditorFrame implements ApplicationListener {
 			controlPoints.clear();
 
 			selected = false;
-			pickedEntity = null;
-			additionalSelected.clear();
+			Editor.selection.picked = null;
+			Editor.selection.selected.clear();
 
 			refresh();
 		}
@@ -2321,8 +2097,8 @@ public class EditorFrame implements ApplicationListener {
 		}
     }
 
-    public void toggleCollisionBoxes() {
-        showCollisionBoxes = !showCollisionBoxes;
+    public void toggleGizmos() {
+        showGizmos = !showGizmos;
     }
 
     public void clearSelection() {
@@ -2333,12 +2109,10 @@ public class EditorFrame implements ApplicationListener {
         else {
             clearEntitySelection();
 		}
-		
-		if (editorUi.isShowingContextMenu()) {
-			editorUi.hideContextMenu();
-		}
 
-        history.saveState(level);
+		if (ui.isShowingContextMenu()) {
+			ui.hideContextMenu();
+		}
     }
 
     public void toggleLights() {
@@ -2373,11 +2147,14 @@ public class EditorFrame implements ApplicationListener {
 
 		gameApp.createFromEditor(previewLevel);
 
-		Game.instance.player.x = camera.position.x;
-		Game.instance.player.y = camera.position.z;
-		Game.instance.player.z = camera.position.y - 0.4f;
-		Game.instance.player.rot = rotX - 3.14159265f;
-		Game.instance.player.yrot = -rotY + 18.9f;
+		Vector3 cameraPosition = cameraController.getPosition();
+		Vector2 cameraRotation = cameraController.getRotation();
+
+		Game.instance.player.x = cameraPosition.x;
+		Game.instance.player.y = cameraPosition.y - Game.instance.player.eyeHeight;
+		Game.instance.player.z = cameraPosition.z;
+		Game.instance.player.rot = cameraRotation.x - 3.14159265f;
+		Game.instance.player.yrot = -cameraRotation.y;
 		Game.isDebugMode = true;
 	}
 
@@ -2431,8 +2208,7 @@ public class EditorFrame implements ApplicationListener {
 	}
 
     private void setupHud(TextureRegion[] wallTextures) {
-
-        editorUi = new EditorUi(editor, this);
+		ui = new EditorUi();
 
         wallPickerButton = new Image(new TextureRegionDrawable(wallTextures[0]));
         wallPickerButton.setScaling(Scaling.stretch);
@@ -2446,15 +2222,15 @@ public class EditorFrame implements ApplicationListener {
         floorPickerButton = new Image(new TextureRegionDrawable(wallTextures[2]));
         floorPickerButton.setScaling(Scaling.stretch);
 
-        Stage stage = editorUi.getStage();
+        Stage stage = ui.getStage();
         Table wallPickerLayoutTable = new Table();
         wallPickerLayoutTable.setFillParent(true);
         wallPickerLayoutTable.align(Align.left | Align.top).pad(6f).padTop(150f);
 
-        Label wallLabel = new Label("Upper Wall", editorUi.getSmallSkin());
-        Label wallBottomLabel = new Label("Lower Wall", editorUi.getSmallSkin());
-        Label ceilingLabel = new Label("Ceiling", editorUi.getSmallSkin());
-        Label floorLabel = new Label("Floor", editorUi.getSmallSkin());
+        Label wallLabel = new Label("Upper Wall", ui.getSmallSkin());
+        Label wallBottomLabel = new Label("Lower Wall", ui.getSmallSkin());
+        Label ceilingLabel = new Label("Ceiling", ui.getSmallSkin());
+        Label floorLabel = new Label("Floor", ui.getSmallSkin());
 
         wallPickerLayoutTable.add(wallPickerButton).width(50f).height(50f).align(Align.left).padBottom(6f);
         wallPickerLayoutTable.add(wallLabel).align(Align.left);
@@ -2469,7 +2245,7 @@ public class EditorFrame implements ApplicationListener {
         wallPickerLayoutTable.add(floorLabel).align(Align.left);
         wallPickerLayoutTable.row();
 
-        paintAdjacent = new CheckBox("Paint adjacent", editorUi.getSmallSkin());
+        paintAdjacent = new CheckBox("Paint adjacent", ui.getSmallSkin());
         paintAdjacent.setChecked(true);
         wallPickerLayoutTable.add(paintAdjacent).colspan(2).padLeft(-10f);
 
@@ -2486,7 +2262,7 @@ public class EditorFrame implements ApplicationListener {
                         	doPaint();
                     }
                 };
-				editorUi.showModal(picker);
+				ui.showModal(picker);
                 event.handle();
             }
         });
@@ -2504,7 +2280,7 @@ public class EditorFrame implements ApplicationListener {
                         	doPaint();
                     }
                 };
-				editorUi.showModal(picker);
+				ui.showModal(picker);
                 event.handle();
             }
         });
@@ -2522,7 +2298,7 @@ public class EditorFrame implements ApplicationListener {
                         	doPaint();
                     }
                 };
-                editorUi.showModal(picker);
+                ui.showModal(picker);
                 event.handle();
             }
         });
@@ -2540,15 +2316,14 @@ public class EditorFrame implements ApplicationListener {
                         	doPaint();
                     }
                 };
-				editorUi.showModal(picker);
+				ui.showModal(picker);
 				event.handle();
             }
         });
 
         stage.addActor(wallPickerLayoutTable);
-        editorUi.initUi();
+        ui.initUi();
 
-        editorInput = new EditorInput(this);
         inputMultiplexer = new InputMultiplexer();
 
         inputMultiplexer.addProcessor(stage);
@@ -2556,34 +2331,13 @@ public class EditorFrame implements ApplicationListener {
         inputMultiplexer.addProcessor(input);
 
         setInputProcessor();
+
+		ui.resize(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
     }
 
     public void setInputProcessor() {
         Gdx.input.setInputProcessor(inputMultiplexer);
     }
-
-    public Tesselator tesselator = new Tesselator();
-    public void Tesselate()
-	{
-        if(!tesselators.world.needsTesselation()) return;
-
-        if(renderer.chunks != null)
-			renderer.chunks.clear();
-
-		int width = level.width;
-		int height = level.height;
-
-		int xOffset = 0;
-		int yOffset = 0;
-
-		boolean makeFloors = true;
-		boolean makeCeilings = true;
-		boolean makeWalls = true;
-
-		tesselator.Tesselate(level, renderer, null, xOffset, yOffset, width, height, tesselators, makeFloors, makeCeilings, makeWalls, showLights);
-
-        refreshTriangleSpatialHash();
-	}
 
 	public int GetNextPowerOf2(int v) {
 		v--;
@@ -2683,7 +2437,7 @@ public class EditorFrame implements ApplicationListener {
 			indices[i++] = (short)(i - 1);
         }
 
-		Mesh mesh = new Mesh(true, vertices.length, indices.length, new VertexAttribute(Usage.Position, 3, "a_position"), new VertexAttribute(Usage.ColorUnpacked, 4, "a_color"));
+		Mesh mesh = new Mesh(false, vertices.length, indices.length, new VertexAttribute(Usage.Position, 3, "a_position"), new VertexAttribute(Usage.ColorUnpacked, 4, "a_color"));
         mesh.setVertices(vertices);
         mesh.setIndices(indices);
 
@@ -2703,45 +2457,54 @@ public class EditorFrame implements ApplicationListener {
 	public void drawZCircle(float startX, float startY, float startZ, float radius, Color color) {
 		lineRenderer.setColor(color);
 
-		int segments = 30;
+		float tau = (float)Math.PI * 2;
+		int segments = 48;
+		float step = tau / segments;
+
 		for(int i = 0; i < segments; i++) {
-			float sin = (float)Math.sin((float)i / (float)segments * 7f);
-			float cos = (float)Math.cos((float)i / (float)segments * 7f);
+			float sin = (float)Math.sin(i * step) * radius;
+			float cos = (float)Math.cos(i * step) * radius;
 
-			float nextsin = (float)Math.sin((float)(i + 1) / (float)segments * 7f);
-			float nextcos = (float)Math.cos((float)(i + 1) / (float)segments * 7f);
+			float nextsin = (float)Math.sin((i + 1) * step) * radius;
+			float nextcos = (float)Math.cos((i + 1) * step) * radius;
 
-			lineRenderer.line(startX + sin * radius, startY, startZ + cos * radius, startX + nextsin * radius, startY, startZ + nextcos * radius);
-		}
-	}
-
-	public void drawXCircle(float startX, float startY, float startZ, float radius, Color color) {
-		lineRenderer.setColor(color);
-
-		int segments = 30;
-		for(int i = 0; i < segments; i++) {
-			float sin = (float)Math.sin((float)i / (float)segments * 7f);
-			float cos = (float)Math.cos((float)i / (float)segments * 7f);
-
-			float nextsin = (float)Math.sin((float)(i + 1) / (float)segments * 7f);
-			float nextcos = (float)Math.cos((float)(i + 1) / (float)segments * 7f);
-
-			lineRenderer.line(startX, startY + cos * radius, startZ + sin * radius, startX, startY + nextcos * radius, startZ + nextsin * radius);
+			lineRenderer.line(startX + sin, startY, startZ + cos, startX + nextsin, startY, startZ + nextcos);
 		}
 	}
 
 	public void drawYCircle(float startX, float startY, float startZ, float radius, Color color) {
 		lineRenderer.setColor(color);
 
-		int segments = 30;
+		float tau = (float)Math.PI * 2;
+		int segments = 48;
+		float step = tau / segments;
+
 		for(int i = 0; i < segments; i++) {
-			float sin = (float)Math.sin((float)i / (float)segments * 7f);
-			float cos = (float)Math.cos((float)i / (float)segments * 7f);
+			float sin = (float)Math.sin(i * step) * radius;
+			float cos = (float)Math.cos(i * step) * radius;
 
-			float nextsin = (float)Math.sin((float)(i + 1) / (float)segments * 7f);
-			float nextcos = (float)Math.cos((float)(i + 1) / (float)segments * 7f);
+			float nextsin = (float)Math.sin((i + 1) * step) * radius;
+			float nextcos = (float)Math.cos((i + 1) * step) * radius;
 
-			lineRenderer.line(startX + sin * radius, startY + cos * radius, startZ, startX + nextsin * radius, startY + nextcos * radius, startZ);
+			lineRenderer.line(startX, startY + cos, startZ + sin, startX, startY + nextcos, startZ + nextsin);
+		}
+	}
+
+	public void drawXCircle(float startX, float startY, float startZ, float radius, Color color) {
+		lineRenderer.setColor(color);
+
+		float tau = (float)Math.PI * 2;
+		int segments = 48;
+		float step = tau / segments;
+
+		for(int i = 0; i < segments; i++) {
+			float sin = (float)Math.sin(i * step) * radius;
+			float cos = (float)Math.cos(i * step) * radius;
+
+			float nextsin = (float)Math.sin((i + 1) * step) * radius;
+			float nextcos = (float)Math.cos((i + 1) * step) * radius;
+
+			lineRenderer.line(startX + sin, startY + cos, startZ, startX + nextsin, startY + nextcos, startZ);
 		}
 	}
 
@@ -2842,120 +2605,55 @@ public class EditorFrame implements ApplicationListener {
    }
 
    public void addEntityMarker(Markers selectedItem) {
-	   	int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
-
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
-		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
-
 	   clearSelectedMarkers();
 
 	   if(selectedItem != Markers.none) {
-		   for(int x = selX; x < selX + selWidth; x++) {
-				for(int y = selY; y < selY + selHeight; y++) {
-				   EditorMarker eM = new EditorMarker(selectedItem, x, y);
-				   level.editorMarkers.add(eM);
-				}
+           for (TileSelectionInfo info : Editor.selection.tiles) {
+               EditorMarker eM = new EditorMarker(selectedItem, info.x, info.y);
+               level.editorMarkers.add(eM);
+               markWorldAsDirty(info.x, info.y, 4);
 		   }
 	   }
-
-	   refreshLights();
 
        history.saveState(level);
    }
 
    public boolean selectionHasEntityMarker() {
-	   	int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
-
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
-		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
-
 	   for(EditorMarker marker : level.editorMarkers) {
-		   if(marker.x >= selX && marker.x < selX + selWidth && marker.y >= selY && marker.y < selY + selHeight) return true;
+		   if (Editor.selection.tiles.contains(marker.x, marker.y)) return true;
 	   }
 
 	   return false;
    }
 
    public void addEntity(Entity e) {
-	   if(selected) {
-		   int x = selectionX;
-		   int y = selectionY;
-
-		   String objCopy = Game.toJson(e);
-
-		   Entity copy = Game.fromJson(e.getClass(), objCopy);
-		   copy.x = x + 0.5f;
-		   copy.y = y + 0.5f;
-
-		   Tile at = level.getTileOrNull(x, y);
-		   if(at != null) copy.z = at.floorHeight + 0.5f;
-
-		   level.entities.add(copy);
-	   }
-
-       history.saveState(level);
-
-	   refreshLights();
+	   level.entities.add(e);
+	   e.init(level, Source.EDITOR);
+	   markWorldAsDirty((int)e.x, (int)e.y, 4);
    }
 
-   public void clearSelectedMarkers() {
-	   	int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
+    public void clearSelectedMarkers() {
+        if (level.editorMarkers == null || level.editorMarkers.size == 0) {
+            return;
+        }
 
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
-		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
+        for (TileSelectionInfo info : Editor.selection.tiles) {
+            Array<EditorMarker> toDelete = new Array<EditorMarker>();
+            for (EditorMarker m : level.editorMarkers) {
+                if (m.x == info.x && m.y == info.y) {
+                    toDelete.add(m);
+                }
+            }
 
-	   for(int x = selX; x < selX + selWidth; x++) {
-			for(int y = selY; y < selY + selHeight; y++) {
-				if(level.editorMarkers != null && level.editorMarkers.size > 0) {
-					Array<EditorMarker> toDelete = new Array<EditorMarker>();
+            if (toDelete.size > 0) {
+                markWorldAsDirty(info.x, info.y, 4);
+            }
 
-					for(int i = 0; i < level.editorMarkers.size; i++) {
-						EditorMarker m = level.editorMarkers.get(i);
-						if(m.x == x && m.y == y) toDelete.add(m);
-					}
-
-					for(EditorMarker m : toDelete) {
-						level.editorMarkers.removeValue(m, true);
-					}
-				}
-			}
-		}
-
-	   refreshLights();
-   }
+            for (EditorMarker m : toDelete) {
+                level.editorMarkers.removeValue(m, true);
+            }
+        }
+    }
 
 	public void refresh() {
 		gridMesh.dispose();
@@ -2966,8 +2664,31 @@ public class EditorFrame implements ApplicationListener {
 		refreshLights();
 	}
 
+	public void markWorldAsDirty(int xPos, int yPos, int radius) {
+		int startX = (xPos - radius) / 17;
+		int startY = (yPos - radius) / 17;
+		int endX = (xPos + radius) / 17;
+		int endY = (yPos + radius) / 17;
+
+		for(int x = startX; x <= endX; x++) {
+			for(int y = startY; y <= endY; y++) {
+				WorldChunk chunk = renderer.GetWorldChunkAt(x * 17, y * 17);
+
+				if(chunk == null) {
+					// No chunk here yet, so make one
+					chunk = new WorldChunk(renderer);
+					chunk.setOffset(x * 17, y * 17);
+					chunk.setSize(17, 17);
+					renderer.chunks.add(chunk);
+				}
+
+				chunk.hasBuilt = false;
+			}
+		}
+	}
+
 	public void refreshLights() {
-        tesselators.refresh();
+		level.isDirty = true;
 
 		if(showLights) {
 			level.cleanupLightCache();
@@ -2990,322 +2711,173 @@ public class EditorFrame implements ApplicationListener {
 	}
 
 	public void setTile(Tile tocopy) {
-		int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
-
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
-		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
-
-		Tile selected = level.getTile(selectionX, selectionY);
-
-		for(int x = selX; x < selX + selWidth; x++) {
-			for(int y = selY; y < selY + selHeight; y++) {
-				Tile t = level.getTileOrNull(x, y);
-
-				if(t == null) {
-					t = new Tile();
-				}
-
-                Tile.copy(tocopy, t);
-				level.setTile(x, y, t);
-
-                t.eastTex = t.westTex = t.northTex = t.southTex = null;
-                t.bottomEastTex = t.bottomWestTex = t.bottomNorthTex = t.bottomSouthTex = null;
-			}
-		}
-
-        // Paint directional tiles
-        if(paintAdjacent.isChecked()) {
-            if (selY - 1 >= 0) {
-                for (int x = selX; x < selX + selWidth; x++) {
-                    int y = selY - 1;
-                    Tile t = level.getTileOrNull(x, y);
-
-                    if (t == null) {
-                        t = new Tile();
-                        t.blockMotion = true;
-                        t.renderSolid = true;
-                        level.setTile(x, y, t);
-                    }
-                    t.southTex = tocopy.wallTex;
-                    t.southTexAtlas = tocopy.wallTexAtlas;
-                    t.bottomSouthTex = tocopy.wallBottomTex;
-                    t.bottomSouthTexAtlas = tocopy.wallBottomTexAtlas;
-                }
+	    // Selected tiles.
+        for (TileSelectionInfo info : Editor.selection.tiles) {
+            Tile t = info.tile;
+            if (t == null) {
+                t = new Tile();
             }
 
-            if (selY + selHeight < level.height) {
-                for (int x = selX; x < selX + selWidth; x++) {
-                    int y = selY + selHeight;
-                    Tile t = level.getTileOrNull(x, y);
+            Tile.copy(tocopy, t);
+            level.setTile(info.x, info.y, t);
 
-                    if (t == null) {
-                        t = new Tile();
-                        t.blockMotion = true;
-                        t.renderSolid = true;
-                        level.setTile(x, y, t);
-                    }
+            t.eastTex = t.westTex = t.northTex = t.southTex = null;
+            t.bottomEastTex = t.bottomWestTex = t.bottomNorthTex = t.bottomSouthTex = null;
+
+            markWorldAsDirty(info.x, info.y, 1);
+        }
+
+        if(!paintAdjacent.isChecked()) {
+            return;
+        }
+
+        // Adjacent tiles.
+        for (AdjacentTileSelectionInfo info : Editor.selection.tiles.adjacent) {
+            Tile t = info.tile;
+            if (t == null) {
+                t = new Tile();
+                t.blockMotion = true;
+                t.renderSolid = true;
+                level.setTile(info.x, info.y, t);
+            }
+
+            switch (info.dir) {
+                case NORTH:
                     t.northTex = tocopy.wallTex;
                     t.northTexAtlas = tocopy.wallTexAtlas;
                     t.bottomNorthTex = tocopy.wallBottomTex;
                     t.bottomNorthTexAtlas = tocopy.wallBottomTexAtlas;
-                }
-            }
+                    break;
 
-            if (selX - 1 >= 0) {
-                for (int y = selY; y < selY + selHeight; y++) {
-                    int x = selX - 1;
-                    Tile t = level.getTileOrNull(x, y);
+                case SOUTH:
+                    t.southTex = tocopy.wallTex;
+                    t.southTexAtlas = tocopy.wallTexAtlas;
+                    t.bottomSouthTex = tocopy.wallBottomTex;
+                    t.bottomSouthTexAtlas = tocopy.wallBottomTexAtlas;
+                    break;
 
-                    if (t == null) {
-                        t = new Tile();
-                        t.blockMotion = true;
-                        t.renderSolid = true;
-                        level.setTile(x, y, t);
-                    }
-                    t.westTex = tocopy.wallTex;
-                    t.westTexAtlas = tocopy.wallTexAtlas;
-                    t.bottomWestTex = tocopy.wallBottomTex;
-                    t.bottomWestTexAtlas = tocopy.wallBottomTexAtlas;
-                }
-            }
-
-            if (selX + selWidth < level.width) {
-                for (int y = selY; y < selY + selHeight; y++) {
-                    int x = selX + selWidth;
-                    Tile t = level.getTileOrNull(x, y);
-
-                    if (t == null) {
-                        t = new Tile();
-                        t.blockMotion = true;
-                        t.renderSolid = true;
-                        level.setTile(x, y, t);
-                    }
+                case EAST:
                     t.eastTex = tocopy.wallTex;
                     t.eastTexAtlas = tocopy.wallTexAtlas;
                     t.bottomEastTex = tocopy.wallBottomTex;
                     t.bottomEastTexAtlas = tocopy.wallBottomTexAtlas;
-                }
+                    break;
+
+                case WEST:
+                    t.westTex = tocopy.wallTex;
+                    t.westTexAtlas = tocopy.wallTexAtlas;
+                    t.bottomWestTex = tocopy.wallBottomTex;
+                    t.bottomWestTexAtlas = tocopy.wallBottomTexAtlas;
+                    break;
             }
         }
-
-		refreshLights();
 	}
 
 	public void paintTile(Tile tocopy) {
-		int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
-
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
-		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
-
-		for(int x = selX; x < selX + selWidth; x++) {
-			for(int y = selY; y < selY + selHeight; y++) {
-				Tile t = level.getTileOrNull(x, y);
-
-				if(t != null) {
-					t.wallTex = tocopy.wallTex;
-					t.floorTex = tocopy.floorTex;
-					t.ceilTex = tocopy.ceilTex;
-                    t.wallBottomTex = tocopy.wallBottomTex;
-                    t.wallTexAtlas = tocopy.wallTexAtlas;
-                    t.wallBottomTexAtlas = tocopy.wallBottomTexAtlas;
-                    t.floorTexAtlas = tocopy.floorTexAtlas;
-                    t.ceilTexAtlas = tocopy.ceilTexAtlas;
-				}
-				else {
-					t = new Tile();
-					t.wallTex = tocopy.wallTex;
-                    t.wallBottomTex = tocopy.wallBottomTex;
-					t.floorTex = tocopy.floorTex;
-					t.ceilTex = tocopy.ceilTex;
-                    t.wallTexAtlas = tocopy.wallTexAtlas;
-                    t.wallBottomTexAtlas = tocopy.wallBottomTexAtlas;
-                    t.floorTexAtlas = tocopy.floorTexAtlas;
-                    t.ceilTexAtlas = tocopy.ceilTexAtlas;
-					t.blockMotion = true;
-					t.renderSolid = true;
-					level.setTile(x, y, t);
-				}
-
-                t.eastTex = t.westTex = t.northTex = t.southTex = null;
-                t.eastTexAtlas = t.westTexAtlas = t.northTexAtlas = t.southTexAtlas = null;
-
-                t.bottomEastTex = t.bottomWestTex = t.bottomNorthTex = t.bottomSouthTex = null;
-                t.bottomEastTexAtlas = t.bottomWestTexAtlas = t.bottomNorthTexAtlas = t.bottomSouthTexAtlas = null;
-
-                t.init(Source.EDITOR);
-			}
-		}
-
-        if(paintAdjacent.isChecked()) {
-            if (selY - 1 >= 0) {
-                for (int x = selX; x < selX + selWidth; x++) {
-                    int y = selY - 1;
-                    Tile t = level.getTileOrNull(x, y);
-
-                    if (t == null) {
-                        t = new Tile();
-                        t.blockMotion = true;
-                        t.renderSolid = true;
-                        level.setTile(x, y, t);
-                    }
-                    t.southTex = tocopy.wallTex;
-                    t.southTexAtlas = tocopy.wallTexAtlas;
-                    t.bottomSouthTex = tocopy.wallBottomTex;
-                    t.bottomSouthTexAtlas = tocopy.wallBottomTexAtlas;
-                }
+        for (TileSelectionInfo info : Editor.selection.tiles) {
+            Tile t = info.tile;
+            if (t == null) {
+                t = new Tile();
+                t.blockMotion = true;
+                t.renderSolid = true;
+                level.setTile(info.x, info.y, t);
             }
 
-            if (selY + selHeight < level.height) {
-                for (int x = selX; x < selX + selWidth; x++) {
-                    int y = selY + selHeight;
-                    Tile t = level.getTileOrNull(x, y);
+            t.wallTexAtlas = tocopy.wallTexAtlas;
+            t.wallTex = tocopy.wallTex;
+            t.wallBottomTexAtlas = tocopy.wallBottomTexAtlas;
+            t.wallBottomTex = tocopy.wallBottomTex;
+            t.floorTex = tocopy.floorTex;
+            t.floorTexAtlas = tocopy.floorTexAtlas;
+            t.ceilTex = tocopy.ceilTex;
+            t.ceilTexAtlas = tocopy.ceilTexAtlas;
+            t.eastTex = t.westTex = t.northTex = t.southTex = null;
+            t.eastTexAtlas = t.westTexAtlas = t.northTexAtlas = t.southTexAtlas = null;
+            t.bottomEastTex = t.bottomWestTex = t.bottomNorthTex = t.bottomSouthTex = null;
+            t.bottomEastTexAtlas = t.bottomWestTexAtlas = t.bottomNorthTexAtlas = t.bottomSouthTexAtlas = null;
 
-                    if (t == null) {
-                        t = new Tile();
-                        t.blockMotion = true;
-                        t.renderSolid = true;
-                        level.setTile(x, y, t);
-                    }
+            t.init(Source.EDITOR);
+
+            markWorldAsDirty(info.x, info.y, 1);
+		}
+
+        if(!paintAdjacent.isChecked()) {
+            return;
+        }
+
+        for (AdjacentTileSelectionInfo info : Editor.selection.tiles.adjacent) {
+            Tile t = info.tile;
+            if (t == null) {
+                t = new Tile();
+                t.blockMotion = true;
+                t.renderSolid = true;
+                level.setTile(info.x, info.y, t);
+            }
+
+            switch (info.dir) {
+                case NORTH:
                     t.northTex = tocopy.wallTex;
                     t.northTexAtlas = tocopy.wallTexAtlas;
                     t.bottomNorthTex = tocopy.wallBottomTex;
                     t.bottomNorthTexAtlas = tocopy.wallBottomTexAtlas;
-                }
-            }
-
-            if (selX - 1 >= 0) {
-                for (int y = selY; y < selY + selHeight; y++) {
-                    int x = selX - 1;
-                    Tile t = level.getTileOrNull(x, y);
-
-                    if (t == null) {
-                        t = new Tile();
-                        t.blockMotion = true;
-                        t.renderSolid = true;
-                        level.setTile(x, y, t);
-                    }
-                    t.westTex = tocopy.wallTex;
-                    t.westTexAtlas = tocopy.wallTexAtlas;
-                    t.bottomWestTex = tocopy.wallBottomTex;
-                    t.bottomWestTexAtlas = tocopy.wallBottomTexAtlas;
-                }
-            }
-
-            if (selX + selWidth < level.width) {
-                for (int y = selY; y < selY + selHeight; y++) {
-                    int x = selX + selWidth;
-                    Tile t = level.getTileOrNull(x, y);
-
-                    if (t == null) {
-                        t = new Tile();
-                        t.blockMotion = true;
-                        t.renderSolid = true;
-                        level.setTile(x, y, t);
-                    }
+                    break;
+                case SOUTH:
+                    t.southTex = tocopy.wallTex;
+                    t.southTexAtlas = tocopy.wallTexAtlas;
+                    t.bottomSouthTex = tocopy.wallBottomTex;
+                    t.bottomSouthTexAtlas = tocopy.wallBottomTexAtlas;
+                    break;
+                case EAST:
                     t.eastTex = tocopy.wallTex;
                     t.eastTexAtlas = tocopy.wallTexAtlas;
                     t.bottomEastTex = tocopy.wallBottomTex;
                     t.bottomEastTexAtlas = tocopy.wallBottomTexAtlas;
-                }
+                    break;
+                case WEST:
+                    t.westTex = tocopy.wallTex;
+                    t.westTexAtlas = tocopy.wallTexAtlas;
+                    t.bottomWestTex = tocopy.wallBottomTex;
+                    t.bottomWestTexAtlas = tocopy.wallBottomTexAtlas;
+                    break;
             }
         }
-
-		refreshLights();
 	}
 
 	public void clearTiles() {
-		int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
+        for (TileSelectionInfo info : Editor.selection.tiles) {
+            Tile n = level.getTile(info.x, info.y - 1);
+            Tile s = level.getTile(info.x, info.y + 1);
+            Tile e = level.getTile(info.x - 1, info.y);
+            Tile w = level.getTile(info.x + 1, info.y);
 
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
-		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
+            if(n.blockMotion && s.blockMotion && e.blockMotion && w.blockMotion) {
+                level.setTile(info.x, info.y, null);
+            }
+            else {
+                Tile t = Tile.NewSolidTile();
+                t.wallTex = (byte)pickedWallTexture;
+                t.wallTexAtlas = pickedWallTextureAtlas;
+                level.setTile(info.x, info.y, t);
+            }
 
-		for(int x = selX; x < selX + selWidth; x++) {
-			for(int y = selY; y < selY + selHeight; y++) {
-				Tile n = level.getTile(x, y - 1);
-				Tile s = level.getTile(x, y + 1);
-				Tile e = level.getTile(x - 1, y);
-				Tile w = level.getTile(x + 1, y);
-
-				if(n.blockMotion && s.blockMotion && e.blockMotion && w.blockMotion) {
-					level.setTile(x, y, null);
-				}
-				else {
-					Tile t = Tile.NewSolidTile();
-					t.wallTex = (byte)pickedWallTexture;
-					t.wallTexAtlas = pickedWallTextureAtlas;
-					level.setTile(x, y, t);
-				}
-			}
+            markWorldAsDirty(info.x, info.y, 1);
 		}
 
 		clearSelectedMarkers();
-
-		refreshLights();
 	}
 
 	public void rotateFloorTex(int value) {
-    	if(pickedEntity != null) return;
+    	if(Editor.selection.picked != null) return;
 
-		int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
+        for (TileSelectionInfo info : Editor.selection.tiles) {
+            Tile t = info.tile;
+            if (t != null) {
+                t.floorTexRot += value;
+                t.floorTexRot %= 4;
+            }
 
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
+            markWorldAsDirty(info.x, info.y, 1);
 		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
-
-		for(int x = selX; x < selX + selWidth; x++) {
-			for(int y = selY; y < selY + selHeight; y++) {
-				Tile t = level.getTileOrNull(x,y);
-				if(t != null) {
-					t.floorTexRot += value;
-					t.floorTexRot %= 4;
-				}
-			}
-		}
-
-		refreshLights();
 	}
 
     public Entity copyEntity(Entity entity) {
@@ -3315,231 +2887,144 @@ public class EditorFrame implements ApplicationListener {
     public void copy() {
         clipboard = new EditorClipboard();
 
-        if(pickedEntity != null) {
-            Entity copy = copyEntity(pickedEntity);
-            clipboard.offset = new Vector3(pickedEntity.x, pickedEntity.y, 0);
-            copy.x -= (int)pickedEntity.x + 1;
-            copy.y -= (int)pickedEntity.y + 1;
-            float heightOffset = copy.z - level.getTile((int)pickedEntity.x, (int)pickedEntity.y).getFloorHeight(0.5f, 0.5f);
-            copy.z = heightOffset;
+        // Copy entities
+        if(Editor.selection.picked != null) {
+            Entity picked = Editor.selection.picked;
+            for (Entity e : Editor.selection.all) {
+                Entity copy = copyEntity(e);
+                copy.x -= (int) picked.x + 1;
+                copy.y -= (int) picked.y + 1;
+                copy.z -= - level.getTile((int)picked.x, (int)picked.y).getFloorHeight(0.5f, 0.5f);
 
-            clipboard.entities.add(copy);
-
-            if(additionalSelected != null) {
-                for(Entity e : additionalSelected) {
-                    Entity aCopy = copyEntity(e);
-                    aCopy.x -= (int)pickedEntity.x + 1;
-                    aCopy.y -= (int)pickedEntity.y + 1;
-                    aCopy.z = heightOffset + (aCopy.z - pickedEntity.z);
-                    clipboard.entities.add(aCopy);
-                }
+                clipboard.entities.add(copy);
             }
         }
 
-        int selX = selectionX;
-        int selY = selectionY;
-        int selWidth = selectionWidth;
-        int selHeight = selectionHeight;
-
-        if(selWidth < 0) {
-            selX = selX + selWidth;
-            selWidth *= -1;
-            selX += 1;
-        }
-        if(selHeight < 0) {
-            selY = selY + selHeight;
-            selHeight *= -1;
-            selY += 1;
-        }
-
-        if(pickedEntity == null) {
-            clipboard.tiles = new Tile[selWidth][selHeight];
-            clipboard.selWidth = selWidth;
-            clipboard.selHeight = selHeight;
-            clipboard.offset = new Vector3(selX, selY, 0);
-
-            for (int x = selX; x < selX + selWidth; x++) {
-                for (int y = selY; y < selY + selHeight; y++) {
-                    Tile t = level.getTileOrNull(x, y);
-
-                    if(t != null) t = (Tile) KryoSerializer.copyObject(t);
-                    clipboard.tiles[x - selX][y - selY] = t;
+        // Copy tiles
+        if(Editor.selection.picked == null) {
+            for (TileSelectionInfo info : Editor.selection.tiles) {
+                Tile t = info.tile;
+                if (t != null) {
+                    info.tile = Tile.copy(t);
                 }
+
+                // Calculate offset
+                info.x -= Editor.selection.tiles.x;
+                info.y -= Editor.selection.tiles.y;
+
+                clipboard.tiles.add(info);
             }
         }
-        else {
-            clipboard.selWidth = 0;
-            clipboard.selHeight = 0;
-        }
+
+        // Serialize to system clipboard.
+        Clipboard systemClipboard = Gdx.app.getClipboard();
+        String contents = new Json().toJson(clipboard);
+        systemClipboard.setContents(contents);
     }
 
     public void paste() {
-        if(clipboard != null) {
-            int selX = selectionX;
-            int selY = selectionY;
-            int selWidth = selectionWidth;
-            int selHeight = selectionHeight;
-
-            if(selWidth < 0) {
-                selX = selX + selWidth;
-                selX += 1;
-            }
-            if(selHeight < 0) {
-                selY = selY + selHeight;
-                selY += 1;
-            }
-
-            for(int x = 0; x < clipboard.selWidth; x++) {
-                for(int y = 0; y < clipboard.selHeight; y++) {
-                    if(clipboard.tiles[x][y] == null)
-                        level.setTile(x + selX, y + selY, null);
-                    else {
-                        Tile t = new Tile();
-                        Tile.copy(clipboard.tiles[x][y],t);
-                        level.setTile(x + selX, y + selY, t);
-                    }
-                }
-            }
-
-            for(Entity e : clipboard.entities) {
-                Entity copy = copyEntity(e);
-                copy.x += selX + 1;
-                copy.y += selY + 1;
-
-                Tile copyAt = level.getTileOrNull(selX, selY);
-                if(copyAt != null) {
-                	copy.z += copyAt.getFloorHeight(0.5f, 0.5f);
-				}
-
-                level.entities.add(copy);
-            }
-
-            // save undo history
-            history.saveState(level);
+        // Deserialize from system clipboard.
+        try {
+            Clipboard systemClipboard = Gdx.app.getClipboard();
+            Json json = new Json();
+            clipboard = json.fromJson(EditorClipboard.class, systemClipboard.getContents());
+        }
+        catch (Exception e) {
+            Gdx.app.log("Editor", e.getMessage());
         }
 
-        refreshLights();
+        if (clipboard == null) {
+            return;
+        }
+
+        int cursorTileX = Editor.selection.tiles.x;
+        int cursorTileY = Editor.selection.tiles.y;
+
+        // Paste tiles
+        for (TileSelectionInfo info : clipboard.tiles) {
+            Tile t = info.tile;
+            if (t != null) {
+                t = Tile.copy(t);
+            }
+
+            int offsetX = info.x + cursorTileX;
+            int offsetY = info.y + cursorTileY;
+
+            level.setTile(offsetX, offsetY, t);
+            markWorldAsDirty(offsetX, offsetY, 1);
+        }
+
+        // Paste entities
+        for(Entity e : clipboard.entities) {
+            Entity copy = copyEntity(e);
+            copy.x += cursorTileX + 1;
+            copy.y += cursorTileY + 1;
+
+            Tile copyAt = level.getTileOrNull(cursorTileX, cursorTileY);
+            if(copyAt != null) {
+                copy.z += copyAt.getFloorHeight(0.5f, 0.5f);
+            }
+
+            addEntity(copy);
+        }
+
+        // Save undo history
+        history.saveState(level);
     }
 
 	public void rotateAngle() {
-        if(pickedEntity != null) return;
+        if(Editor.selection.picked != null) return;
 
-		int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
+        for (TileSelectionInfo info : Editor.selection.tiles) {
+            Tile t = info.tile;
+            if (t != null) {
+                t.blockMotion = false;
+                t.renderSolid = false;
+                t.tileSpaceType = TileSpaceType.values()[(t.tileSpaceType.ordinal() + 1) % TileSpaceType.values().length];
+            }
 
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
+            markWorldAsDirty(info.x, info.y, 1);
 		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
-
-		for(int x = selX; x < selX + selWidth; x++) {
-			for(int y = selY; y < selY + selHeight; y++) {
-				Tile t = level.getTileOrNull(x,y);
-				if(t != null) {
-					t.blockMotion = false;
-					t.renderSolid = false;
-					t.tileSpaceType = TileSpaceType.values()[(t.tileSpaceType.ordinal() + 1) % TileSpaceType.values().length];
-				}
-			}
-		}
-
-		refreshLights();
 	}
 
-	public void rotateCeilTex(int value) {
-		if(pickedEntity != null) return;
+    public void rotateCeilTex(int value) {
+        if(Editor.selection.picked != null) return;
 
-		int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
+        for (TileSelectionInfo info : Editor.selection.tiles) {
+            Tile t = info.tile;
+            if (t != null) {
+                t.ceilTexRot += value;
+                t.ceilTexRot %= 4;
+            }
 
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
-		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
-
-		for(int x = selX; x < selX + selWidth; x++) {
-			for(int y = selY; y < selY + selHeight; y++) {
-				Tile t = level.getTileOrNull(x,y);
-				if(t != null) {
-					t.ceilTexRot += value;
-					t.ceilTexRot %= 4;
-				}
-			}
-		}
-
-		refreshLights();
-	}
+            markWorldAsDirty(info.x, info.y, 1);
+        }
+    }
 
 	public void moveFloor(int value) {
-		int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
+        if(Editor.selection.picked != null) return;
 
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
-		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
+        for (TileSelectionInfo info : Editor.selection.tiles) {
+            Tile t = info.tile;
+            if (t != null) {
+                t.floorHeight += (value * 0.0625f);
+            }
 
-		for(int x = selX; x < selX + selWidth; x++) {
-			for(int y = selY; y < selY + selHeight; y++) {
-				Tile t = level.getTileOrNull(x,y);
-				if(t != null)
-					t.floorHeight += (value * 0.0625f);
-			}
-		}
-
-		refreshLights();
+            markWorldAsDirty(info.x, info.y, 1);
+        }
 	}
 
 	public void moveCeiling(int value) {
-		int selX = selectionX;
-		int selY = selectionY;
-		int selWidth = selectionWidth;
-		int selHeight = selectionHeight;
+        if(Editor.selection.picked != null) return;
 
-		if(selWidth < 0) {
-			selX = selX + selWidth;
-			selWidth *= -1;
-			selX += 1;
-		}
-		if(selHeight < 0) {
-			selY = selY + selHeight;
-			selHeight *= -1;
-			selY += 1;
-		}
+        for (TileSelectionInfo info : Editor.selection.tiles) {
+            Tile t = info.tile;
+            if (t != null) {
+                t.ceilHeight += (value * 0.0625f);
+            }
 
-		for(int x = selX; x < selX + selWidth; x++) {
-			for(int y = selY; y < selY + selHeight; y++) {
-				Tile t = level.getTileOrNull(x,y);
-				if(t != null)
-					t.ceilHeight += (value * 0.0625f);
-			}
-		}
-
-		refreshLights();
+            markWorldAsDirty(info.x, info.y, 1);
+        }
 	}
 
 	public void doFloorMoveUp() {
@@ -3576,15 +3061,12 @@ public class EditorFrame implements ApplicationListener {
 
 	Vector3 t_pickerVector = new Vector3();
 	public void updatePickedSurface() {
-		if (Collidor.intersectRayForwardFacingTriangles(camera.getPickRay(Gdx.input.getX(), Gdx.input.getY()), camera, triangleSpatialHash.getAllTriangles(), t_pickerVector, intersectNormal)) {
+		if (Collidor.intersectRayForwardFacingTriangles(camera.getPickRay(Gdx.input.getX(), Gdx.input.getY()), camera, GlRenderer.triangleSpatialHash.getAllTriangles(), t_pickerVector, intersectNormal)) {
 			t_pickerVector.add(intersectTemp.x * 0.0001f, intersectTemp.y * 0.0001f, intersectTemp.z * 0.0001f);
 			pickedSurface.position.set(t_pickerVector);
 			pickedSurface.isPicked = true;
 
-			Tile t = level.getTileOrNull((int)pickedSurface.position.x, (int)pickedSurface.position.z);
-			if(t == null) {
-				t = Tile.solidWall;
-			}
+			Tile t = level.getTile((int)pickedSurface.position.x, (int)pickedSurface.position.z);
 
 			float floorHeight = t.getFloorHeight(pickedSurface.position.x, pickedSurface.position.z);
 			float ceilHeight = t.getCeilHeight(pickedSurface.position.x, pickedSurface.position.z);
@@ -3809,7 +3291,7 @@ public class EditorFrame implements ApplicationListener {
 			t.init(Source.EDITOR);
 
 			history.saveState(level);
-			refreshLights();
+			markWorldAsDirty((int)pickedSurface.position.x, (int)pickedSurface.position.z, 1);
 		}
 	}
 
@@ -3868,7 +3350,161 @@ public class EditorFrame implements ApplicationListener {
 			}
 		};
 
-		editorUi.showModal(picker);
+		ui.showModal(picker);
+	}
+
+	public void fillSurfaceTexture() {
+		if(pickedSurface == null)
+			return;
+
+		int xPos = (int)pickedSurface.position.x;
+		int yPos = (int)pickedSurface.position.z;
+
+		Tile t = level.getTileOrNull(xPos, yPos);
+		if(t == null)
+			return;
+
+		history.saveState(level);
+
+		if(pickedSurface.tileSurface == TileSurface.Floor) {
+			floodFillFloorTexture(xPos, yPos, t.floorTex, t.floorTexAtlas, t.floorHeight);
+		}
+		else if (pickedSurface.tileSurface == TileSurface.Ceiling) {
+			floodFillCeilingTexture(xPos, yPos, t.ceilTex, t.ceilTexAtlas, t.ceilHeight);
+		}
+		else if (pickedSurface.tileSurface == TileSurface.UpperWall) {
+			floodFillWallTexture(xPos, yPos, t.getWallTex(pickedSurface.edge), t.getWallTexAtlas(pickedSurface.edge), null);
+		}
+		else if (pickedSurface.tileSurface == TileSurface.LowerWall) {
+			floodFillWallTexture(xPos, yPos, t.getWallBottomTex(pickedSurface.edge), t.getWallBottomTexAtlas(pickedSurface.edge), null);
+		}
+
+		history.saveState(level);
+		refreshLights();
+	}
+
+	public void floodFillFloorTexture(int x, int y, byte checkTex, String checkAtlas, float lastHeight) {
+		Tile t = level.getTileOrNull(x, y);
+		if(t != null) {
+			if(t.renderSolid) {
+				return;
+			}
+			if(t.floorTex == (byte)pickedFloorTexture && t.floorTexAtlas == pickedFloorTextureAtlas) {
+				return;
+			}
+			if(t.floorHeight != lastHeight || t.floorTex != checkTex || t.floorTexAtlas != checkAtlas) {
+				return;
+			}
+
+			t.floorTex = (byte)pickedFloorTexture;
+			t.floorTexAtlas = pickedFloorTextureAtlas;
+
+			floodFillFloorTexture(x + 1, y, checkTex, checkAtlas, t.floorHeight);
+			floodFillFloorTexture(x - 1, y, checkTex, checkAtlas, t.floorHeight);
+			floodFillFloorTexture(x, y + 1, checkTex, checkAtlas, t.floorHeight);
+			floodFillFloorTexture(x, y - 1, checkTex, checkAtlas, t.floorHeight);
+		}
+	}
+
+	public void floodFillCeilingTexture(int x, int y, byte checkTex, String checkAtlas, float lastHeight) {
+		Tile t = level.getTileOrNull(x, y);
+		if(t != null) {
+			if(t.renderSolid) {
+				return;
+			}
+			if(t.ceilTex == (byte)pickedCeilingTexture && t.ceilTexAtlas == pickedCeilingTextureAtlas) {
+				return;
+			}
+			if(t.ceilHeight != lastHeight || t.ceilTex != checkTex || t.ceilTexAtlas != checkAtlas) {
+				return;
+			}
+
+			t.ceilTex = (byte)pickedCeilingTexture;
+			t.ceilTexAtlas = pickedCeilingTextureAtlas;
+
+			floodFillCeilingTexture(x + 1, y, checkTex, checkAtlas, t.ceilHeight);
+			floodFillCeilingTexture(x - 1, y, checkTex, checkAtlas, t.ceilHeight);
+			floodFillCeilingTexture(x, y + 1, checkTex, checkAtlas, t.ceilHeight);
+			floodFillCeilingTexture(x, y - 1, checkTex, checkAtlas, t.ceilHeight);
+		}
+	}
+
+	public void floodFillWallTexture(int x, int y, byte checkTex, String checkAtlas, Tile last) {
+		Tile t = level.getTileOrNull(x, y);
+		if(t == null) {
+			return;
+		}
+
+		if(pickedSurface.tileSurface == TileSurface.UpperWall) {
+			if (t.getWallTex(pickedSurface.edge) == pickedWallTexture && t.getWallTexAtlas(pickedSurface.edge) == pickedWallTextureAtlas) {
+				return;
+			}
+			if (t.getWallTex(pickedSurface.edge) != checkTex || t.getWallTexAtlas(pickedSurface.edge) != checkAtlas) {
+				return;
+			}
+		}
+		else {
+			if (t.getWallBottomTex(pickedSurface.edge) == pickedWallBottomTexture && t.getWallBottomTexAtlas(pickedSurface.edge) == pickedWallBottomTextureAtlas) {
+				return;
+			}
+			if (t.getWallBottomTex(pickedSurface.edge) != checkTex || t.getWallBottomTexAtlas(pickedSurface.edge) != checkAtlas) {
+				return;
+			}
+		}
+
+		// Find the open tile we are facing
+		Tile adjacent = null;
+		if(pickedSurface.edge == TileEdges.North) {
+			adjacent = level.getTileOrNull(x, y - 1);
+		}
+		else if(pickedSurface.edge == TileEdges.South) {
+			adjacent = level.getTileOrNull(x, y + 1);
+		}
+		else if(pickedSurface.edge == TileEdges.East) {
+			adjacent = level.getTileOrNull(x - 1, y);
+		}
+		else if(pickedSurface.edge == TileEdges.West) {
+			adjacent = level.getTileOrNull(x + 1, y);
+		}
+		if(adjacent == null || adjacent.blockMotion) {
+			return;
+		}
+
+		// Make sure there's a connection
+		if(last != null) {
+			if (adjacent.ceilHeight <= last.floorHeight || adjacent.floorHeight >= last.ceilHeight) {
+				return;
+			}
+			if(adjacent.ceilHeight == t.ceilHeight && adjacent.floorHeight == t.floorHeight) {
+				return;
+			}
+			if(pickedSurface.tileSurface == TileSurface.LowerWall) {
+				// Is there actually even a lower wall?
+				if(adjacent.floorHeight >= t.floorHeight) {
+					return;
+				}
+			}
+		}
+
+		// Set texture, flood to the next
+		int nextXOffset = 0;
+		int nextYOffset = 0;
+
+		if(pickedSurface.edge == TileEdges.North || pickedSurface.edge == TileEdges.South) {
+			nextXOffset = 1;
+		}
+		else {
+			nextYOffset = 1;
+		}
+
+		if(pickedSurface.tileSurface == TileSurface.UpperWall)
+			t.setWallTexture(pickedSurface.edge, (byte)pickedWallTexture, pickedWallTextureAtlas);
+		else
+			t.setBottomWallTexture(pickedSurface.edge, (byte)pickedWallBottomTexture, pickedWallBottomTextureAtlas);
+
+		// Two dimensional, a bit easier than floors or ceilings
+		floodFillWallTexture(x + nextXOffset, y + nextYOffset, checkTex, checkAtlas, adjacent);
+		floodFillWallTexture(x - nextXOffset, y - nextYOffset, checkTex, checkAtlas, adjacent);
 	}
 
 	public TextureRegion[] loadAtlas(String texture, int spritesHorizontal, boolean filter) {
@@ -3889,161 +3525,8 @@ public class EditorFrame implements ApplicationListener {
 		return region;
 	}
 
-	public Color GetLightmapAt(float posx, float posy, float posz) {
-		Color t = level.GetLightmapAt(posx, posz, posz);
-
-		if(t == null) {
-			return Color.BLACK;
-		}
-
-		return level.GetLightmapAt(posx, posy, posz);
-	}
-
-	Array<Vector3> t_collisionTriangles = new Array<Vector3>();
-	VertexAttributes t_staticMeshVertexAttributes = new VertexAttributes(new VertexAttribute(VertexAttributes.Usage.Position, 3, ShaderProgram.POSITION_ATTRIBUTE),
-			new VertexAttribute(VertexAttributes.Usage.ColorPacked, 4, ShaderProgram.COLOR_ATTRIBUTE),
-			new VertexAttribute(VertexAttributes.Usage.TextureCoordinates, 2, ShaderProgram.TEXCOORD_ATTRIBUTE + "0"));
-
-	public Array<Mesh> mergeStaticMeshes(Level level, Array<Entity> entities) {
-		short indexOffset = 0;
-		int vertexCount = 0;
-
-		ShortArray indices = new ShortArray(500);
-		FloatArray vertices = new FloatArray(500);
-
-		Array<Mesh> created = new Array<Mesh>();
-
-		for(Entity e : entities) {
-			if(e.drawable != null && e.drawable instanceof DrawableMesh) {
-				DrawableMesh drbl = (DrawableMesh)e.drawable;
-
-				if(drbl.loadedMesh != null && drbl.isStaticMesh) {
-
-					// may need to chunk up the meshes
-					if(drbl.loadedMesh.getNumIndices() + indexOffset >= 32000 && vertexCount > 0) {
-
-						Mesh m = EditorCachePools.getStaticMesh(t_staticMeshVertexAttributes, vertexCount, indices.size, true);
-
-						// pack the array
-						indices.shrink();
-						vertices.shrink();
-
-						m.setIndices(indices.toArray());
-						m.setVertices(vertices.toArray());
-
-						indices = new ShortArray(500);
-						vertices = new FloatArray(500);
-
-						vertexCount = 0;
-						indexOffset = 0;
-
-						created.add(m);
-					}
-
-					VertexAttributes attributes = drbl.loadedMesh.getVertexAttributes();
-
-					int positionOffset = 0;
-					int uvOffset = 0;
-					int attSize = 0;
-
-					for(int i = 0; i < attributes.size(); i++) {
-						VertexAttribute attrib = attributes.get(i);
-
-						if(attrib.usage == VertexAttribute.Position().usage) {
-							positionOffset = attSize;
-						}
-						else if(attrib.usage == VertexAttribute.TexCoords(0).usage) {
-							uvOffset = attSize;
-						}
-
-						attSize += attrib.numComponents;
-					}
-
-					short[] ind = new short[drbl.loadedMesh.getNumIndices()];
-					float[] verts = new float[drbl.loadedMesh.getNumVertices() * attSize];
-
-					if(ind.length > 0)
-						drbl.loadedMesh.getIndices(ind);
-					else {
-						ind = new short[drbl.loadedMesh.getNumVertices()];
-
-						for(int i = 0; i < drbl.loadedMesh.getNumVertices(); i++) {
-							ind[i] = (short)i;
-						}
-					}
-
-					drbl.loadedMesh.getVertices(verts);
-
-					Matrix4 matrix = new Matrix4().setToTranslation(e.x, e.z - 0.5f, e.y);
-					matrix.scale(drbl.scale, drbl.scale, drbl.scale);
-					matrix.mul(new Matrix4().setToRotation(Vector3.X, drbl.dir.y * -90f));
-
-					matrix.rotate(Vector3.Y, drbl.rotZ);
-					matrix.rotate(Vector3.X, drbl.rotX);
-					matrix.rotate(Vector3.Z, drbl.rotY);
-
-					// translate the vertices by the model matrix
-					Matrix4.mulVec(matrix.val, verts, 0, drbl.loadedMesh.getNumVertices(), attSize);
-
-					if(ind != null && verts != null) {
-						for(int i = 0; i < ind.length; i++) {
-							indices.add((short)(ind[i] + indexOffset));
-						}
-						indexOffset += ind.length;
-
-						for(int i = 0; i < drbl.loadedMesh.getNumVertices() * attSize; i+= attSize) {
-
-							vertices.add(verts[i + positionOffset]);
-							vertices.add(verts[i + positionOffset + 1]);
-							vertices.add(verts[i + positionOffset + 2]);
-
-							if (e.isSolid) {
-								t_collisionTriangles.add(EditorCachePools.getCollisionVector(verts[i + positionOffset], verts[i + positionOffset + 1], verts[i + positionOffset + 2]));
-							}
-
-							float c = Color.WHITE.toFloatBits();
-							if(!e.fullbrite && showLights) {
-								c = level.getLightColorAt(verts[i + positionOffset], verts[i + positionOffset + 2], verts[i + positionOffset + 1], null, new Color()).toFloatBits();
-							}
-
-							vertices.add(c);
-							vertices.add(verts[i + uvOffset]);
-							vertices.add(verts[i + uvOffset + 1]);
-
-							vertexCount++;
-						}
-					}
-				}
-			}
-		}
-
-		if(vertexCount == 0) return null;
-
-		for (int i = 0; i < t_collisionTriangles.size; i += 3) {
-			Triangle triangle = EditorCachePools.getTriangle();
-			triangle.v1.set(t_collisionTriangles.get(i + 2));
-			triangle.v2.set(t_collisionTriangles.get(i + 1));
-			triangle.v3.set(t_collisionTriangles.get(i));
-
-			staticMeshCollisionTriangles.add(triangle);
-		}
-		t_collisionTriangles.clear();
-
-		Mesh m = EditorCachePools.getStaticMesh(t_staticMeshVertexAttributes, vertexCount, indices.size, true);
-
-		// pack the array
-		indices.shrink();
-		vertices.shrink();
-
-		m.setIndices(indices.toArray());
-		m.setVertices(vertices.toArray());
-
-		created.add(m);
-		return created;
-	}
-
 	public void doCarve() {
-        if(pickedEntity != null) return;
+        if(Editor.selection.picked != null) return;
 
 		Tile t = new Tile();
 		t.wallTex = (byte)pickedWallTexture;
@@ -4058,7 +3541,7 @@ public class EditorFrame implements ApplicationListener {
 		t.tileSpaceType = TileSpaceType.EMPTY;
 		t.renderSolid = t.blockMotion;
 
-		Tile selectedTile = level.getTile(selectionX, selectionY);
+		Tile selectedTile = Editor.selection.tiles.first();
 		t.floorHeight = selectedTile.floorHeight;
 		t.ceilHeight = selectedTile.ceilHeight;
 
@@ -4068,7 +3551,7 @@ public class EditorFrame implements ApplicationListener {
 			t.ceilHeight = size - 0.5f;
 		}
 
-		t.floorHeight = selectionHeights.y;
+		t.floorHeight = Editor.selection.tiles.getBounds().min.z;
 
 		setTile(t);
 
@@ -4077,7 +3560,7 @@ public class EditorFrame implements ApplicationListener {
 	}
 
 	public void doPaint() {
-        if(pickedEntity != null) return;
+        if(Editor.selection.picked != null) return;
 
 		Tile t = new Tile();
 		t.wallTex = (byte)pickedWallTexture;
@@ -4092,7 +3575,7 @@ public class EditorFrame implements ApplicationListener {
         t.tileSpaceType = TileSpaceType.EMPTY;
 		t.renderSolid = t.blockMotion;
 
-		Tile selectedTile = level.getTile(selectionX, selectionY);
+		Tile selectedTile = Editor.selection.tiles.first();
 		t.floorHeight = selectedTile.floorHeight;
 		t.ceilHeight = selectedTile.ceilHeight;
 
@@ -4103,15 +3586,17 @@ public class EditorFrame implements ApplicationListener {
 	}
 
 	public void doDelete() {
-        if(pickedEntity != null) {
-            level.entities.removeValue(pickedEntity, true);
+        if(Editor.selection.picked != null) {
+            level.entities.removeValue(Editor.selection.picked, true);
+			markWorldAsDirty((int) Editor.selection.picked.x, (int) Editor.selection.picked.y, 4);
 
-            for(Entity selEntity : additionalSelected) {
+            for(Entity selEntity : Editor.selection.selected) {
                 level.entities.removeValue(selEntity, true);
+
+				markWorldAsDirty((int)selEntity.x, (int)selEntity.y, 4);
             }
 
             clearEntitySelection();
-            refreshLights();
 
             canDelete = false;
         }
@@ -4119,12 +3604,14 @@ public class EditorFrame implements ApplicationListener {
             clearTiles();
         }
 
+		refreshLights();
+
         // save undo history
         history.saveState(level);
 	}
 
 	public void doPick() {
-		Tile t = level.getTile(selectionX, selectionY);
+		Tile t = Editor.selection.tiles.first();
 		if(t != null) {
 			setPickedWallTexture(t.wallTex, t.wallTexAtlas);
 			setPickedCeilingTexture(t.ceilTex, t.ceilTexAtlas);
@@ -4134,51 +3621,46 @@ public class EditorFrame implements ApplicationListener {
 	}
 
     public void flattenFloor() {
-        int selX = selectionX;
-        int selY = selectionY;
-        int selWidth = selectionWidth;
-        int selHeight = selectionHeight;
+        if(Editor.selection.picked != null) return;
 
-        float matchFloorHeight = level.getTile(selectionX, selectionY).floorHeight;
-        for(int x = selX; x < selX + selWidth; x++) {
-            for(int y = selY; y < selY + selHeight; y++) {
-                Tile t = level.getTileOrNull(x, y);
-                if(t != null) {
-                    t.floorHeight = matchFloorHeight;
-                    t.slopeNE = t.slopeNW = t.slopeSE = t.slopeSW = 0;
-                }
+        float matchFloorHeight = Editor.selection.tiles.first().floorHeight;
+        for (TileSelectionInfo info : Editor.selection.tiles) {
+            Tile t = info.tile;
+            if (t != null) {
+                t.floorHeight = matchFloorHeight;
+                t.slopeNE = t.slopeNW = t.slopeSE = t.slopeSW = 0;
             }
+
+            markWorldAsDirty(info.x, info.y, 1);
         }
-        refreshLights();
     }
 
     public void flattenCeiling() {
-        int selX = selectionX;
-        int selY = selectionY;
-        int selWidth = selectionWidth;
-        int selHeight = selectionHeight;
+        if(Editor.selection.picked != null) return;
 
-        float matchCeilHeight = level.getTile(selectionX, selectionY).ceilHeight;
-        for(int x = selX; x < selX + selWidth; x++) {
-            for(int y = selY; y < selY + selHeight; y++) {
-                Tile t = level.getTileOrNull(x, y);
-                if(t != null) {
-                    t.ceilHeight = matchCeilHeight;
-                    t.ceilSlopeNE = t.ceilSlopeNW = t.ceilSlopeSE = t.ceilSlopeSW = 0;
-                }
+        float matchCeilHeight = Editor.selection.tiles.first().ceilHeight;
+        for (TileSelectionInfo info : Editor.selection.tiles) {
+            Tile t = info.tile;
+            if (t != null) {
+                t.ceilHeight = matchCeilHeight;
+                t.ceilSlopeNE = t.ceilSlopeNW = t.ceilSlopeSE = t.ceilSlopeSW = 0;
             }
+
+            markWorldAsDirty(info.x, info.y, 1);
         }
-        refreshLights();
     }
 
     public void toggleSimulation() {
         if(player == null) {
+        	Vector3 cameraPosition = cameraController.getPosition();
+        	Vector2 cameraRotation = cameraController.getRotation();
+
             player = new Player();
-            player.x = camX - 0.5f;
-            player.y = camY - 0.5f;
-            player.z = camZ;
-            player.rot = rotX - 3.14159265f;
-            player.yrot = rotY;
+            player.x = cameraPosition.x - 0.5f;
+            player.y = cameraPosition.y - 0.5f;
+            player.z = cameraPosition.z;
+            player.rot = cameraRotation.x - 3.14159265f;
+            player.yrot = cameraRotation.y;
 
             for(Entity e : level.entities) { e.editorStartPreview(level); }
         } else {
@@ -4189,14 +3671,20 @@ public class EditorFrame implements ApplicationListener {
         }
     }
 
-    public void createNewLevel(int width, int height) {
-        level = new Level(width,height);
-        refresh();
+    public void viewSelected() {
+		cameraController.viewSelected();
+	}
 
-        camX = level.width / 2;
-        camZ = 4.5f;
-        camY = level.height / 2;
-    }
+	public float getEntityBoundingSphereRadius(Entity entity) {
+		if (entity instanceof Light) {
+			return ((Light)entity).range;
+		}
+		else if (entity instanceof DynamicLight) {
+			return ((DynamicLight)entity).range;
+		}
+
+		return new Vector3(entity.collision.x, entity.collision.z / 2, entity.collision.y).len();
+	}
 
     public void resizeLevel(int levelWidth, int levelHeight) {
         Level oldLevel = level;
@@ -4217,70 +3705,43 @@ public class EditorFrame implements ApplicationListener {
 		selected = false;
 		tileDragging = false;
 
-		selectionHeight = 1;
-		selectionWidth = 1;
+		Editor.selection.tiles.height = 1;
+		Editor.selection.tiles.width = 1;
 
-		pickedEntity = null;
-		additionalSelected.clear();
+		Editor.selection.picked = null;
+		Editor.selection.selected.clear();
 		controlPoints.clear();
 		pickedControlPoint = null;
 
-		additionalSelected.clear();
-
-        history.saveState(level);
-
-        editorUi.showEntityPropertiesMenu(this);
+        ui.showEntityPropertiesMenu(true);
 	}
 
     public void pickEntity(Entity entity) {
-        pickedEntity = entity;
-        editorUi.showEntityPropertiesMenu(this);
+        Editor.selection.picked = entity;
+        ui.showEntityPropertiesMenu(true);
     }
 
     public void pickAdditionalEntity(Entity entity) {
-        additionalSelected.add(entity);
-        editorUi.showEntityPropertiesMenu(this);
+        Editor.selection.selected.add(entity);
+        ui.showEntityPropertiesMenu(true);
     }
 
     public Level getLevel() { return level; }
-
-    public int getSelectionX() {
-        return selectionX;
-    }
-
-    public int getSelectionY() {
-        return selectionY;
-    }
 
 	public Vector3 getIntersection() {
 		if(pickedSurface.isPicked)
 			return new Vector3(intpos);
 
-		float floorPos = level.getTile(selectionX, selectionY).floorHeight;
-		return new Vector3(getSelectionX(), floorPos, getSelectionY());
+		float floorPos = Editor.selection.tiles.first().floorHeight;
+		return new Vector3(Editor.selection.tiles.x, floorPos, Editor.selection.tiles.y);
 	}
-
-    public Entity getPickedEntity() { return pickedEntity; }
-
-    public Entity getPickedOrHoveredEntity() {
-        if(pickedEntity != null) return pickedEntity;
-        return hoveredEntity;
-    }
-
-    public Entity getHoveredEntity() {
-        return hoveredEntity;
-    }
-
-    public Array<Entity> getAdditionalSelectedEntities() {
-        return additionalSelected;
-    }
 
     public MoveMode getMoveMode() {
         return moveMode;
     }
 
     public Array<Triangle> GetCollisionTriangles() {
-        return triangleSpatialHash.getAllTriangles();
+        return GlRenderer.triangleSpatialHash.getAllTriangles();
     }
 
     public Array<Vector3> TriangleArrayToVectorList(Array<Triangle> triangles) {
@@ -4296,19 +3757,19 @@ public class EditorFrame implements ApplicationListener {
     }
 
     public void setDragMode(DragMode dragMode) {
-        if(pickedEntity == null) return;
+        if(Editor.selection.picked == null) return;
         this.dragMode = dragMode;
 
         if(dragMode == DragMode.Y) {
             Vector3 vertDir = new Vector3(Vector3.Y);
             Plane vert = new Plane(vertDir, 0);
-            float len = vert.distance(new Vector3(pickedEntity.x, pickedEntity.z, pickedEntity.y));
+            float len = vert.distance(new Vector3(Editor.selection.picked.x, Editor.selection.picked.z, Editor.selection.picked.y));
             dragPlane = new Plane(vertDir, -len);
         }
         if(dragMode == DragMode.X) {
             Vector3 vertDir = new Vector3(Vector3.Y);
             Plane vert = new Plane(vertDir, 0);
-            float len = vert.distance(new Vector3(pickedEntity.x, pickedEntity.z, pickedEntity.y));
+            float len = vert.distance(new Vector3(Editor.selection.picked.x, Editor.selection.picked.z, Editor.selection.picked.y));
             dragPlane = new Plane(vertDir, -len);
         }
         if(dragMode == DragMode.Z) {
@@ -4316,7 +3777,7 @@ public class EditorFrame implements ApplicationListener {
             vertDir.y = 0;
 
             Plane vert = new Plane(vertDir, 0);
-            float len = vert.distance(new Vector3(pickedEntity.x, pickedEntity.z, pickedEntity.y));
+            float len = vert.distance(new Vector3(Editor.selection.picked.x, Editor.selection.picked.z, Editor.selection.picked.y));
             dragPlane = new Plane(vertDir, -len);
         }
     }
@@ -4337,6 +3798,63 @@ public class EditorFrame implements ApplicationListener {
         return sd;
     }
 
+	public void moveTiles(int moveX, int moveY, float moveZ) {
+		// Move Tiles
+		if(selected) {
+		    Array<TileSelectionInfo> tilesToMove = new Array<TileSelectionInfo>();
+		    for (TileSelectionInfo info : Editor.selection.tiles) {
+		        tilesToMove.add(info);
+                level.setTile(info.x, info.y, null);
+                markWorldAsDirty(info.x, info.y, 1);
+            }
+
+            for (TileSelectionInfo info : tilesToMove) {
+                Tile t = info.tile;
+                int newX = info.x + moveX;
+                int newY = info.y + moveY;
+
+                if(moveZ != 0 && t != null) {
+                    t.floorHeight += moveZ;
+                    t.ceilHeight += moveZ;
+                }
+
+                level.setTile(newX, newY, t);
+                markWorldAsDirty(newX, newY, 1);
+            }
+
+            // Move markers
+            for (TileSelectionInfo info : Editor.selection.tiles) {
+                for (EditorMarker m : level.editorMarkers) {
+                    if (m.x == info.x && m.y == info.y) {
+                        m.x += moveX;
+                        m.y += moveY;
+                    }
+                }
+            }
+
+			Editor.selection.tiles.x += moveX;
+			Editor.selection.tiles.y += moveY;
+
+			controlPoints.clear();
+		}
+
+		// Move Entities
+		Array<Entity> allSelected = new Array<Entity>();
+		if(Editor.selection.picked != null) {
+			allSelected.add(Editor.selection.picked);
+		}
+		allSelected.addAll(Editor.selection.selected);
+
+		for(Entity e : allSelected) {
+			e.x += moveX;
+			e.y += moveY;
+			e.z += moveZ;
+			markWorldAsDirty((int)e.x, (int)e.y, 1);
+		}
+
+		history.saveState(level);
+	}
+
 	private void vizualizePicking() {
 		if(pickViz == null)
 			pickViz = new SpriteBatch();
@@ -4344,5 +3862,18 @@ public class EditorFrame implements ApplicationListener {
 		pickViz.begin();
 		pickViz.draw(pickerFrameBuffer.getColorBufferTexture(), 0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), 0, 0, 1, 1);
 		pickViz.end();
+	}
+
+	public void updateTitle() {
+	    String name = file.name();
+	    if (file.isDirty()) {
+	        name += "*";
+        }
+
+	    setTitle(name);
+    }
+
+	public void setTitle(String title) {
+		Gdx.graphics.setTitle(title + " - DelvEdit");
 	}
 }

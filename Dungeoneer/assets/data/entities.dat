@@ -60,6 +60,7 @@
 			"Teleport": { class: com.interrupt.dungeoneer.entities.triggers.TriggeredTeleportPlayer, floating: true, triggerType: "PLAYER_TOUCHED" },
 			"Shop": { class: com.interrupt.dungeoneer.entities.triggers.TriggeredShop, floating: true, triggerType: "PLAYER_TOUCHED" },
 			"Message": { class: com.interrupt.dungeoneer.entities.triggers.TriggeredMessage, floating: true, triggerType: "PLAYER_TOUCHED" },
+			"DialogueTree": { class: com.interrupt.dungeoneer.entities.triggers.TriggeredDialogue, floating: true, triggerType: "PLAYER_TOUCHED" },
 			"GameOver": { class: com.interrupt.dungeoneer.entities.triggers.TriggeredGameOver, floating: true, triggerType: "PLAYER_TOUCHED" },
 			"Button": {
 				"class": "com.interrupt.dungeoneer.entities.triggers.ButtonModel",
@@ -75,9 +76,11 @@
 				"triggerAnimationTime": 10
 			},
 			"Repeater": { class: com.interrupt.dungeoneer.entities.triggers.RepeatingTrigger, floating: true },
+			"Elevator": { class: com.interrupt.dungeoneer.entities.triggers.TriggeredElevator, floating: true, triggerType: "PLAYER_TOUCHED" },
 			"DamageTrigger": { class: com.interrupt.dungeoneer.entities.triggers.DamageTrigger, floating: true, isSolid: true },
 			"LookAtTrigger": { class: com.interrupt.dungeoneer.entities.triggers.LookAtTrigger, floating: true},
 			"DeleteTrigger": { class: com.interrupt.dungeoneer.entities.triggers.TriggeredDelete, floating: true, triggerType: "PLAYER_TOUCHED" },
+			"LevelSwapTrigger": { class: com.interrupt.dungeoneer.entities.triggers.LevelSwap, floating: true, triggerType: "PLAYER_TOUCHED", triggerResets: false },
 			"InventoryCheck": { class: com.interrupt.dungeoneer.entities.triggers.TriggeredInventoryCheck, floating: true, triggerType: "PLAYER_TOUCHED" },
 			"Lever": {
 				class: com.interrupt.dungeoneer.entities.Group,
